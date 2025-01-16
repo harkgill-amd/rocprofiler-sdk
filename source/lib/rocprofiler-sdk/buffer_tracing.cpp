@@ -20,25 +20,28 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include <rocprofiler-sdk/fwd.h>
-#include <rocprofiler-sdk/hip/table_id.h>
-#include <rocprofiler-sdk/hsa/table_id.h>
-#include <rocprofiler-sdk/marker/table_id.h>
-#include <rocprofiler-sdk/rccl/table_id.h>
-#include <rocprofiler-sdk/rocprofiler.h>
-
 #include "lib/common/logging.hpp"
 #include "lib/rocprofiler-sdk/context/context.hpp"
 #include "lib/rocprofiler-sdk/context/domain.hpp"
 #include "lib/rocprofiler-sdk/hip/hip.hpp"
 #include "lib/rocprofiler-sdk/hsa/async_copy.hpp"
 #include "lib/rocprofiler-sdk/hsa/hsa.hpp"
+#include "lib/rocprofiler-sdk/hsa/memory_allocation.hpp"
 #include "lib/rocprofiler-sdk/hsa/scratch_memory.hpp"
 #include "lib/rocprofiler-sdk/kernel_dispatch/kernel_dispatch.hpp"
 #include "lib/rocprofiler-sdk/marker/marker.hpp"
+#include "lib/rocprofiler-sdk/ompt/ompt.hpp"
 #include "lib/rocprofiler-sdk/page_migration/page_migration.hpp"
 #include "lib/rocprofiler-sdk/rccl/rccl.hpp"
 #include "lib/rocprofiler-sdk/registration.hpp"
+#include "lib/rocprofiler-sdk/runtime_initialization.hpp"
+
+#include <rocprofiler-sdk/fwd.h>
+#include <rocprofiler-sdk/hip/table_id.h>
+#include <rocprofiler-sdk/hsa/table_id.h>
+#include <rocprofiler-sdk/marker/table_id.h>
+#include <rocprofiler-sdk/rccl/table_id.h>
+#include <rocprofiler-sdk/rocprofiler.h>
 
 #include <atomic>
 #include <limits>
@@ -80,11 +83,14 @@ ROCPROFILER_BUFFER_TRACING_KIND_STRING(MARKER_CORE_API)
 ROCPROFILER_BUFFER_TRACING_KIND_STRING(MARKER_CONTROL_API)
 ROCPROFILER_BUFFER_TRACING_KIND_STRING(MARKER_NAME_API)
 ROCPROFILER_BUFFER_TRACING_KIND_STRING(MEMORY_COPY)
+ROCPROFILER_BUFFER_TRACING_KIND_STRING(MEMORY_ALLOCATION)
 ROCPROFILER_BUFFER_TRACING_KIND_STRING(KERNEL_DISPATCH)
 ROCPROFILER_BUFFER_TRACING_KIND_STRING(PAGE_MIGRATION)
 ROCPROFILER_BUFFER_TRACING_KIND_STRING(SCRATCH_MEMORY)
 ROCPROFILER_BUFFER_TRACING_KIND_STRING(CORRELATION_ID_RETIREMENT)
 ROCPROFILER_BUFFER_TRACING_KIND_STRING(RCCL_API)
+ROCPROFILER_BUFFER_TRACING_KIND_STRING(OMPT)
+ROCPROFILER_BUFFER_TRACING_KIND_STRING(RUNTIME_INITIALIZATION)
 
 template <size_t Idx, size_t... Tail>
 std::pair<const char*, size_t>
@@ -217,6 +223,11 @@ rocprofiler_query_buffer_tracing_kind_operation_name(rocprofiler_buffer_tracing_
             val = rocprofiler::hsa::async_copy::name_by_id(operation);
             break;
         }
+        case ROCPROFILER_BUFFER_TRACING_MEMORY_ALLOCATION:
+        {
+            val = rocprofiler::hsa::memory_allocation::name_by_id(operation);
+            break;
+        }
         case ROCPROFILER_BUFFER_TRACING_SCRATCH_MEMORY:
         {
             val = rocprofiler::hsa::scratch_memory::name_by_id(operation);
@@ -261,6 +272,16 @@ rocprofiler_query_buffer_tracing_kind_operation_name(rocprofiler_buffer_tracing_
         case ROCPROFILER_BUFFER_TRACING_PAGE_MIGRATION:
         {
             val = rocprofiler::page_migration::name_by_id(operation);
+            break;
+        }
+        case ROCPROFILER_BUFFER_TRACING_OMPT:
+        {
+            val = rocprofiler::ompt::name_by_id(operation);
+            break;
+        }
+        case ROCPROFILER_BUFFER_TRACING_RUNTIME_INITIALIZATION:
+        {
+            val = rocprofiler::runtime_init::name_by_id(operation);
             break;
         }
         case ROCPROFILER_BUFFER_TRACING_CORRELATION_ID_RETIREMENT:
@@ -334,6 +355,11 @@ rocprofiler_iterate_buffer_tracing_kind_operations(
             ops = rocprofiler::hsa::async_copy::get_ids();
             break;
         }
+        case ROCPROFILER_BUFFER_TRACING_MEMORY_ALLOCATION:
+        {
+            ops = rocprofiler::hsa::memory_allocation::get_ids();
+            break;
+        }
         case ROCPROFILER_BUFFER_TRACING_SCRATCH_MEMORY:
         {
             ops = rocprofiler::hsa::scratch_memory::get_ids();
@@ -377,6 +403,16 @@ rocprofiler_iterate_buffer_tracing_kind_operations(
         case ROCPROFILER_BUFFER_TRACING_PAGE_MIGRATION:
         {
             ops = rocprofiler::page_migration::get_ids();
+            break;
+        }
+        case ROCPROFILER_BUFFER_TRACING_OMPT:
+        {
+            ops = rocprofiler::ompt::get_ids();
+            break;
+        }
+        case ROCPROFILER_BUFFER_TRACING_RUNTIME_INITIALIZATION:
+        {
+            ops = rocprofiler::runtime_init::get_ids();
             break;
         }
         case ROCPROFILER_BUFFER_TRACING_CORRELATION_ID_RETIREMENT:

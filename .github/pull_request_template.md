@@ -1,26 +1,36 @@
-# Details about PR
 
-___Do not mention proprietary info or link to internal work items in this PR.___
+# PR Details
 
-__Work item:__ _"Internal", or link to GitHub issue (if applicable)._
+## Associated Jira Ticket Number/Link
 
-__What were the changes?__  
-_One sentence describing the work done._
+## What type of PR is this? (check all applicable)
 
-__Why were the changes made?__  
-_Explain the motivation behind the work. Provide any publicly-available historical context._
+- [ ] Refactor
+- [ ] Feature
+- [ ] Bug Fix
+- [ ] Optimization
+- [ ] Documentation Update
+- [ ] Continuous Integration
 
-__How was the outcome achieved?__  
-_Technical details behind the work. Explain any publicly-available hardware peculiarities._
+## Technical details
 
-__Additional Documentation:__  
-_What else should the reviewer know?_
+<!-- Please explain the changes along with JIRA/Github link(if applies). -->
 
-## Approval Checklist
+## Added/updated tests?
 
-___Do not approve until these items are satisfied.___
+<!-- We encourage you to keep the code coverage percentage at 80% and above. -->
 
-- [ ] Verify the CHANGELOG has been updated.
-- [ ] Verify if the unit test has been added.
-- [ ] Verify if the integration test is added.
-- [ ] Verify if the documentaiton has been updated.
+- [ ] Yes
+- [ ] No, Does not apply to this PR.
+
+## Updated CHANGELOG?
+
+<!-- Needed for Release updates for a ROCm release. -->
+
+- [ ] Yes
+- [ ] No, Does not apply to this PR.
+
+## Added/Updated documentation?
+
+- [ ] Yes
+- [ ] No, Does not apply to this PR.

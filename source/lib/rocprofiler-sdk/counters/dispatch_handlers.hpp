@@ -46,12 +46,11 @@ queue_cb(const context::context*                                         ctx,
          const context::correlation_id*                                  correlation_id);
 
 void
-completed_cb(const context::context*                       ctx,
-             const std::shared_ptr<counter_callback_info>& info,
-             const hsa::Queue&                             queue,
-             hsa::rocprofiler_packet                       packet,
-             const hsa::Queue::queue_info_session_t&       session,
-             inst_pkt_t&                                   pkts,
-             kernel_dispatch::profiling_time               dispatch_time);
+completed_cb(const context::context*                            ctx,
+             const std::shared_ptr<counter_callback_info>&      info,
+             std::shared_ptr<hsa::Queue::queue_info_session_t>& session,
+             inst_pkt_t&                                        pkts,
+             kernel_dispatch::profiling_time                    dispatch_time);
+
 }  // namespace counters
 }  // namespace rocprofiler

@@ -229,9 +229,13 @@ context*
 get_mutable_registered_context(rocprofiler_context_id_t id)
 {
     if(id.handle < get_contexts_offset()) return nullptr;
+    if(!get_registered_contexts_impl()) return nullptr;
     auto _idx = id.handle - get_contexts_offset();
-    if(_idx >= get_registered_contexts_impl()->size()) return nullptr;
-    return &get_registered_contexts_impl()->at(_idx).value();
+    if(_idx >= get_registered_contexts_impl()->size())
+        return nullptr;
+    else if(get_registered_contexts_impl()->at(_idx).has_value())
+        return &get_registered_contexts_impl()->at(_idx).value();
+    return nullptr;
 }
 
 const context*
@@ -323,7 +327,7 @@ start_context(rocprofiler_context_id_t context_id)
     if(cfg->counter_collection) rocprofiler::counters::start_context(cfg);
     if(cfg->agent_thread_trace) cfg->agent_thread_trace->start_context();
     if(cfg->dispatch_thread_trace) cfg->dispatch_thread_trace->start_context();
-    if(cfg->agent_counter_collection) status = rocprofiler::counters::start_agent_ctx(cfg);
+    if(cfg->device_counter_collection) status = rocprofiler::counters::start_agent_ctx(cfg);
 #if ROCPROFILER_SDK_HSA_PC_SAMPLING > 0
     if(cfg->pc_sampler) status = rocprofiler::pc_sampling::start_service(cfg);
 #endif
@@ -360,7 +364,7 @@ stop_context(rocprofiler_context_id_t idx)
                 if(_expected->dispatch_thread_trace)
                     _expected->dispatch_thread_trace->stop_context();
 
-                if(_expected->agent_counter_collection)
+                if(_expected->device_counter_collection)
                 {
                     rocprofiler::counters::stop_agent_ctx(const_cast<context*>(_expected));
                 }

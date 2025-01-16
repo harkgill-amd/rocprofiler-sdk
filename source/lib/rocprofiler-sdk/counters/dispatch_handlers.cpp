@@ -30,6 +30,7 @@
 #include "lib/rocprofiler-sdk/buffer.hpp"
 #include "lib/rocprofiler-sdk/context/context.hpp"
 #include "lib/rocprofiler-sdk/counters/core.hpp"
+#include "lib/rocprofiler-sdk/counters/sample_processing.hpp"
 #include "lib/rocprofiler-sdk/hsa/queue_controller.hpp"
 #include "lib/rocprofiler-sdk/kernel_dispatch/profiling_time.hpp"
 
@@ -62,12 +63,14 @@ queue_cb(const context::context*                                         ctx,
     // and maybe adds barrier packets if the state is transitioning from serialized <->
     // unserialized
     auto maybe_add_serialization = [&](auto& gen_pkt) {
-        CHECK_NOTNULL(hsa::get_queue_controller())->serializer().rlock([&](const auto& serializer) {
-            for(auto& s_pkt : serializer.kernel_dispatch(queue))
-            {
-                gen_pkt->before_krn_pkt.push_back(s_pkt.ext_amd_aql_pm4);
-            }
-        });
+        CHECK_NOTNULL(hsa::get_queue_controller())
+            ->serializer(&queue)
+            .rlock([&](const auto& serializer) {
+                for(auto& s_pkt : serializer.kernel_dispatch(queue))
+                {
+                    gen_pkt->before_krn_pkt.push_back(s_pkt.ext_amd_aql_pm4);
+                }
+            });
     };
 
     // Packet generated when no instrumentation is performed. May contain serialization
@@ -108,7 +111,7 @@ queue_cb(const context::context*                                         ctx,
 
     auto req_profile = rocprofiler_profile_config_id_t{.handle = 0};
     auto dispatch_data =
-        common::init_public_api_struct(rocprofiler_profile_counting_dispatch_data_t{});
+        common::init_public_api_struct(rocprofiler_dispatch_counting_service_data_t{});
 
     dispatch_data.correlation_id = _corr_id_v;
     {
@@ -160,14 +163,13 @@ queue_cb(const context::context*                                         ctx,
  * Callback called by HSA interceptor when the kernel has completed processing.
  */
 void
-completed_cb(const context::context*                       ctx,
-             const std::shared_ptr<counter_callback_info>& info,
-             const hsa::Queue& /*queue*/,
-             hsa::rocprofiler_packet /*packet*/,
-             const hsa::Queue::queue_info_session_t& session,
-             inst_pkt_t&                             pkts,
-             kernel_dispatch::profiling_time         dispatch_time)
+completed_cb(const context::context*                            ctx,
+             const std::shared_ptr<counter_callback_info>&      info,
+             std::shared_ptr<hsa::Queue::queue_info_session_t>& ptr_session,
+             inst_pkt_t&                                        pkts,
+             kernel_dispatch::profiling_time                    dispatch_time)
 {
+    auto& session = *ptr_session;
     CHECK(info && ctx);
 
     std::shared_ptr<profile_config> prof_config;
@@ -189,104 +191,16 @@ completed_cb(const context::context*                       ctx,
 
     if(!pkt) return;
 
-    CHECK_NOTNULL(hsa::get_queue_controller())->serializer().wlock([&](auto& serializer) {
-        serializer.kernel_completion_signal(session.queue);
-    });
+    CHECK_NOTNULL(hsa::get_queue_controller())
+        ->serializer(&session.queue)
+        .wlock([&](auto& serializer) { serializer.kernel_completion_signal(session.queue); });
 
     // We have no profile config, nothing to output.
     if(!prof_config) return;
 
-    auto decoded_pkt = EvaluateAST::read_pkt(prof_config->pkt_generator.get(), *pkt);
-    EvaluateAST::read_special_counters(
-        *prof_config->agent, prof_config->required_special_counters, decoded_pkt);
-
-    prof_config->packets.wlock([&](auto& pkt_vector) {
-        if(pkt)
-        {
-            pkt_vector.emplace_back(std::move(pkt));
-        }
-    });
-
-    common::container::small_vector<rocprofiler_record_counter_t, 128> out;
-    rocprofiler::buffer::instance*                                     buf = nullptr;
-
-    if(info->buffer)
-    {
-        buf = CHECK_NOTNULL(buffer::get_buffer(info->buffer->handle));
-    }
-
-    auto _corr_id_v =
-        rocprofiler_correlation_id_t{.internal = 0, .external = context::null_user_data};
-    if(const auto* _corr_id = session.correlation_id)
-    {
-        _corr_id_v.internal = _corr_id->internal;
-        if(const auto* external = rocprofiler::common::get_val(
-               session.tracing_data.external_correlation_ids, info->internal_context))
-        {
-            _corr_id_v.external = *external;
-        }
-    }
-
-    auto _dispatch_id = session.callback_record.dispatch_info.dispatch_id;
-    for(auto& ast : prof_config->asts)
-    {
-        std::vector<std::unique_ptr<std::vector<rocprofiler_record_counter_t>>> cache;
-        auto* ret = ast.evaluate(decoded_pkt, cache);
-        CHECK(ret);
-        ast.set_out_id(*ret);
-
-        out.reserve(out.size() + ret->size());
-        for(auto& val : *ret)
-        {
-            val.dispatch_id = _dispatch_id;
-            out.emplace_back(val);
-        }
-    }
-
-    if(!out.empty())
-    {
-        if(buf)
-        {
-            auto _header =
-                common::init_public_api_struct(rocprofiler_profile_counting_dispatch_record_t{});
-            _header.num_records    = out.size();
-            _header.correlation_id = _corr_id_v;
-            if(dispatch_time.status == HSA_STATUS_SUCCESS)
-            {
-                _header.start_timestamp = dispatch_time.start;
-                _header.end_timestamp   = dispatch_time.end;
-            }
-            _header.dispatch_info = session.callback_record.dispatch_info;
-            buf->emplace(ROCPROFILER_BUFFER_CATEGORY_COUNTERS,
-                         ROCPROFILER_COUNTER_RECORD_PROFILE_COUNTING_DISPATCH_HEADER,
-                         _header);
-
-            for(auto itr : out)
-                buf->emplace(
-                    ROCPROFILER_BUFFER_CATEGORY_COUNTERS, ROCPROFILER_COUNTER_RECORD_VALUE, itr);
-        }
-        else
-        {
-            CHECK(info->record_callback);
-
-            auto dispatch_data =
-                common::init_public_api_struct(rocprofiler_profile_counting_dispatch_data_t{});
-
-            dispatch_data.dispatch_info  = session.callback_record.dispatch_info;
-            dispatch_data.correlation_id = _corr_id_v;
-            if(dispatch_time.status == HSA_STATUS_SUCCESS)
-            {
-                dispatch_data.start_timestamp = dispatch_time.start;
-                dispatch_data.end_timestamp   = dispatch_time.end;
-            }
-
-            info->record_callback(dispatch_data,
-                                  out.data(),
-                                  out.size(),
-                                  session.user_data,
-                                  info->record_callback_args);
-        }
-    }
+    completed_cb_params_t params{info, ptr_session, dispatch_time, prof_config, std::move(pkt)};
+    process_callback_data(std::move(params));
 }
+
 }  // namespace counters
 }  // namespace rocprofiler

@@ -21,6 +21,8 @@
 // THE SOFTWARE.
 
 #include "lib/rocprofiler-sdk/hsa/async_copy.hpp"
+#include "lib/common/defines.hpp"
+#include "lib/common/environment.hpp"
 #include "lib/common/logging.hpp"
 #include "lib/common/scope_destructor.hpp"
 #include "lib/common/static_object.hpp"
@@ -28,9 +30,9 @@
 #include "lib/rocprofiler-sdk/agent.hpp"
 #include "lib/rocprofiler-sdk/context/context.hpp"
 #include "lib/rocprofiler-sdk/hsa/hsa.hpp"
-#include "lib/rocprofiler-sdk/kernel_dispatch/profiling_time.hpp"
 #include "lib/rocprofiler-sdk/registration.hpp"
 #include "lib/rocprofiler-sdk/tracing/fwd.hpp"
+#include "lib/rocprofiler-sdk/tracing/profiling_time.hpp"
 #include "lib/rocprofiler-sdk/tracing/tracing.hpp"
 
 #include <rocprofiler-sdk/callback_tracing.h>
@@ -103,7 +105,7 @@ id_by_name(const char* name, std::index_sequence<Idx, IdxTail...>)
     if constexpr(sizeof...(IdxTail) > 0)
         return id_by_name(name, std::index_sequence<IdxTail...>{});
     else
-        return ROCPROFILER_HSA_AMD_EXT_API_ID_NONE;
+        return ROCPROFILER_MEMORY_COPY_LAST;
 }
 
 template <size_t... Idx>
@@ -111,7 +113,7 @@ void
 get_ids(std::vector<uint32_t>& _id_list, std::index_sequence<Idx...>)
 {
     auto _emplace = [](auto& _vec, uint32_t _v) {
-        if(_v < static_cast<uint32_t>(ROCPROFILER_HSA_AMD_EXT_API_ID_LAST)) _vec.emplace_back(_v);
+        if(_v < static_cast<uint32_t>(ROCPROFILER_MEMORY_COPY_LAST)) _vec.emplace_back(_v);
     };
 
     (_emplace(_id_list, async_copy_info<Idx>::operation_idx), ...);
@@ -255,8 +257,13 @@ active_signals::sync()
 {
     if(m_signal.handle == 0) return;
 
+#if defined(ROCPROFILER_CI_STRICT_TIMESTAMPS) && ROCPROFILER_CI_STRICT_TIMESTAMPS > 0
+    constexpr auto timeout_sec = std::chrono::seconds{5};
+#else
     // wait a maximum of thirty seconds
     constexpr auto timeout_sec = std::chrono::seconds{30};
+#endif
+
     constexpr auto timeout =
         std::chrono::duration_cast<std::chrono::nanoseconds>(timeout_sec).count();
 
@@ -317,30 +324,6 @@ convert_hsa_handle(Up _hsa_object)
     return reinterpret_cast<Tp*>(_hsa_object.handle);
 }
 
-hsa_amd_profiling_async_copy_time_t&
-operator+=(hsa_amd_profiling_async_copy_time_t& lhs, uint64_t rhs)
-{
-    lhs.start += rhs;
-    lhs.end += rhs;
-    return lhs;
-}
-
-hsa_amd_profiling_async_copy_time_t&
-operator-=(hsa_amd_profiling_async_copy_time_t& lhs, uint64_t rhs)
-{
-    lhs.start -= rhs;
-    lhs.end -= rhs;
-    return lhs;
-}
-
-hsa_amd_profiling_async_copy_time_t&
-operator*=(hsa_amd_profiling_async_copy_time_t& lhs, uint64_t rhs)
-{
-    lhs.start *= rhs;
-    lhs.end *= rhs;
-    return lhs;
-}
-
 bool
 async_copy_handler(hsa_signal_value_t signal_value, void* arg)
 {
@@ -352,41 +335,44 @@ async_copy_handler(hsa_signal_value_t signal_value, void* arg)
         return false;
     }
 
-    static auto sysclock_period = hsa::get_hsa_timestamp_period();
-
     auto  ts               = common::timestamp_ns();
     auto* _data            = static_cast<async_copy_data*>(arg);
     auto  copy_time        = hsa_amd_profiling_async_copy_time_t{};
     auto  copy_time_status = get_amd_ext_table()->hsa_amd_profiling_get_async_copy_time_fn(
         _data->rocp_signal, &copy_time);
 
-    // normalize
-    copy_time *= sysclock_period;
+    auto _profile_time = tracing::profiling_time{copy_time_status, copy_time.start, copy_time.end};
 
-    // below is a hack for clock skew issues:
-    // the timestamp of this handler for the copy will always be after when the copy ended
-    if(ts < copy_time.end) copy_time -= (copy_time.end - ts);
-
-    // below is a hack for clock skew issues:
-    // the timestamp of the function call triggering the copy will always be before when the copy
-    // started
-    if(copy_time.start < _data->start_ts) copy_time += (_data->start_ts - copy_time.start);
-
-    // if we encounter this in CI, it will cause test to fail
-    ROCP_CI_LOG_IF(ERROR, copy_time_status == HSA_STATUS_SUCCESS && copy_time.end < copy_time.start)
-        << "hsa_amd_profiling_get_async_copy_time for returned async times where the end time ("
-        << copy_time.end << ") was less than the start time (" << copy_time.start << ")";
+    if(_profile_time.status == HSA_STATUS_SUCCESS)
+    {
+        _profile_time = tracing::adjust_profiling_time(
+            "memcpy",
+            "hsa_amd_profiling_get_async_copy_time",
+            _profile_time,
+            tracing::profiling_time{HSA_STATUS_SUCCESS, _data->start_ts, ts});
+    }
+    else
+    {
+        ROCP_CI_LOG(ERROR) << fmt::format(
+            "hsa_amd_profiling_get_async_copy_time for the {} copy operation from agent-{} to "
+            "agent-{} returned status={} :: {}",
+            std::string_view{hsa::async_copy::name_by_id(_data->direction)},
+            CHECK_NOTNULL(agent::get_agent(_data->src_agent))->node_id,
+            CHECK_NOTNULL(agent::get_agent(_data->dst_agent))->node_id,
+            static_cast<int>(copy_time_status),
+            hsa::get_hsa_status_string(copy_time_status));
+    }
 
     // get the contexts that were active when the signal was created
     const auto& tracing_data = _data->tracing_data;
     // we need to decrement this reference count at the end of the functions
     auto* _corr_id = _data->correlation_id;
 
-    if(copy_time_status == HSA_STATUS_SUCCESS && !tracing_data.empty())
+    if(_profile_time.status == HSA_STATUS_SUCCESS && !tracing_data.empty())
     {
         if(!_data->tracing_data.callback_contexts.empty())
         {
-            auto _tracer_data = _data->get_callback_data(copy_time.start, copy_time.end);
+            auto _tracer_data = _data->get_callback_data(_profile_time.start, _profile_time.end);
 
             tracing::execute_phase_exit_callbacks(_data->tracing_data.callback_contexts,
                                                   _data->tracing_data.external_correlation_ids,
@@ -397,7 +383,8 @@ async_copy_handler(hsa_signal_value_t signal_value, void* arg)
 
         if(!_data->tracing_data.buffered_contexts.empty())
         {
-            auto record = _data->get_buffered_record(nullptr, copy_time.start, copy_time.end);
+            auto record =
+                _data->get_buffered_record(nullptr, _profile_time.start, _profile_time.end);
 
             tracing::execute_buffer_record_emplace(_data->tracing_data.buffered_contexts,
                                                    _data->tid,

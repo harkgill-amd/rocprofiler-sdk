@@ -50,14 +50,15 @@ target_sources(
 
 target_link_libraries(
     counter_test_constants
-    PRIVATE rocprofiler-sdk::rocprofiler-common-library
-            rocprofiler-sdk::rocprofiler-static-library rocprofiler-sdk::rocprofiler-hip
-            rocprofiler-sdk::rocprofiler-hsa-runtime)
+    PRIVATE rocprofiler-sdk::rocprofiler-sdk-common-library
+            rocprofiler-sdk::rocprofiler-sdk-static-library
+            rocprofiler-sdk::rocprofiler-sdk-hip
+            rocprofiler-sdk::rocprofiler-sdk-hsa-runtime)
 
 set(ROCPROFILER_LIB_COUNTER_TEST_SOURCES
     metrics_test.cpp evaluate_ast_test.cpp dimension.cpp init_order.cpp core.cpp
-    code_object_loader.cpp agent_profiling.cpp)
-set(ROCPROFILER_LIB_COUNTER_TEST_HEADERS code_object_loader.hpp agent_profiling.hpp)
+    code_object_loader.cpp device_counting.cpp)
+set(ROCPROFILER_LIB_COUNTER_TEST_HEADERS code_object_loader.hpp device_counting.hpp)
 
 add_executable(counter-test)
 
@@ -69,10 +70,10 @@ add_dependencies(counter-test agent_hasco_targets)
 target_link_libraries(
     counter-test
     PRIVATE rocprofiler-sdk::counter-test-constants
-            rocprofiler-sdk::rocprofiler-hsa-runtime
-            rocprofiler-sdk::rocprofiler-hip
-            rocprofiler-sdk::rocprofiler-common-library
-            rocprofiler-sdk::rocprofiler-static-library
+            rocprofiler-sdk::rocprofiler-sdk-hsa-runtime
+            rocprofiler-sdk::rocprofiler-sdk-hip
+            rocprofiler-sdk::rocprofiler-sdk-common-library
+            rocprofiler-sdk::rocprofiler-sdk-static-library
             GTest::gtest
             GTest::gtest_main)
 
@@ -82,4 +83,31 @@ gtest_add_tests(
     TEST_LIST counter-tests_TESTS
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-set_tests_properties(${counter-tests_TESTS} PROPERTIES TIMEOUT 45 LABELS "unittests")
+set_tests_properties(
+    ${counter-tests_TESTS}
+    PROPERTIES
+        TIMEOUT
+        45
+        LABELS
+        "unittests"
+        SKIP_REGULAR_EXPRESSION
+        "Running non-intercept test(.*)could not be locked for profiling due to lack of permissions.*"
+    )
+
+set(ROCPROFILER_LIB_CONSUMER_TEST_SOURCES consumer_test.cpp)
+
+add_executable(consumer-test)
+target_sources(consumer-test PRIVATE ${ROCPROFILER_LIB_CONSUMER_TEST_SOURCES})
+
+target_link_libraries(
+    consumer-test rocprofiler-sdk::rocprofiler-sdk-hsa-runtime
+    rocprofiler-sdk::rocprofiler-sdk-hip rocprofiler-sdk::rocprofiler-sdk-common-library
+    rocprofiler-sdk::rocprofiler-sdk-static-library GTest::gtest GTest::gtest_main)
+
+gtest_add_tests(
+    TARGET consumer-test
+    SOURCES ${ROCPROFILER_LIB_CONSUMER_TEST_SOURCES}
+    TEST_LIST consumer-tests_TESTS
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+set_tests_properties(${consumer-tests_TESTS} PROPERTIES TIMEOUT 45 LABELS "unittests")

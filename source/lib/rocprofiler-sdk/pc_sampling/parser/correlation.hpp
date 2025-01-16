@@ -47,6 +47,12 @@ operator==(device_handle a, device_handle b)
 
 namespace Parser
 {
+struct dispatch_correlation_ids_t
+{
+    rocprofiler_dispatch_id_t    dispatch_id;
+    rocprofiler_correlation_id_t correlation_id;
+};
+
 /**
  * @brief Struct immitating the correlation_id returned by the trap handler in raw PC samples.
  */
@@ -70,11 +76,11 @@ struct DispatchPkt
 
 struct cache_type_t
 {
-    trap_correlation_id_t        id_in{.raw = ~0ul};
-    rocprofiler_correlation_id_t id_out{};
-    uint64_t                     dev_id    = ~0ul;
-    size_t                       increment = 0;
-    size_t                       object_id = 0;
+    trap_correlation_id_t      id_in{.raw = ~0ul};
+    dispatch_correlation_ids_t id_out{};
+    uint64_t                   dev_id    = ~0ul;
+    size_t                     increment = 0;
+    size_t                     object_id = 0;
 };
 
 inline bool
@@ -131,7 +137,7 @@ public:
     {
         std::unique_lock<std::mutex> lk(mut);
         auto trap_id = trap_correlation_id(pkt.doorbell_id, pkt.write_index, pkt.queue_size);
-        dispatch_to_correlation[{trap_id, pkt.device}] = pkt.correlation_id;
+        dispatch_to_correlation[{trap_id, pkt.device}] = {pkt.dispatch_id, pkt.correlation_id};
         cache_reset_count.fetch_add(1);
     }
 
@@ -150,7 +156,7 @@ public:
      * Given a device dev, doorbell and and wrapped dispatch_id,
      * @returns the correlation_id set by dispatch_pkt_id_t
      */
-    rocprofiler_correlation_id_t get(device_handle dev, trap_correlation_id_t correlation_in)
+    dispatch_correlation_ids_t get(device_handle dev, trap_correlation_id_t correlation_in)
     {
 #ifndef _PARSER_CORRELATION_DISABLE_CACHE
         static thread_local cache_type_t cache{};
@@ -195,9 +201,9 @@ public:
     }
 
 private:
-    std::unordered_map<DispatchPkt, rocprofiler_correlation_id_t> dispatch_to_correlation{};
-    std::atomic<size_t>                                           cache_reset_count{1};
-    size_t                                                        object_id = 0;
+    std::unordered_map<DispatchPkt, dispatch_correlation_ids_t> dispatch_to_correlation{};
+    std::atomic<size_t>                                         cache_reset_count{1};
+    size_t                                                      object_id = 0;
 
     std::mutex mut;
 };
@@ -205,13 +211,13 @@ private:
 
 using address_range_t = rocprofiler::sdk::codeobj::segment::address_range_t;
 
-template <bool bHostTrap, typename GFXIP>
+template <typename GFXIP, typename PcSamplingRecordT>
 inline pcsample_status_t
-add_upcoming_samples(const device_handle               device,
-                     const generic_sample_t*           buffer,
-                     const size_t                      available_samples,
-                     Parser::CorrelationMap*           corr_map,
-                     rocprofiler_pc_sampling_record_t* samples)
+add_upcoming_samples(const device_handle     device,
+                     const generic_sample_t* buffer,
+                     const size_t            available_samples,
+                     Parser::CorrelationMap* corr_map,
+                     PcSamplingRecordT*      samples)
 {
     pcsample_status_t status           = PCSAMPLE_STATUS_SUCCESS;
     auto              cache_addr_range = address_range_t{0, 0, ROCPROFILER_CODE_OBJECT_ID_NONE};
@@ -226,22 +232,25 @@ add_upcoming_samples(const device_handle               device,
         const auto* snap = reinterpret_cast<const perf_sample_snapshot_v1*>(buffer + p);
 
         auto& pc_sample = samples[p];
-        pc_sample       = copySample<bHostTrap, GFXIP>((const void*) (buffer + p));
-        pc_sample.size  = sizeof(rocprofiler_pc_sampling_record_t);
+        pc_sample       = copySample<GFXIP, PcSamplingRecordT>((const void*) (buffer + p));
 
         // Convert PC -> (loaded code object id containing PC, offset within code object)
         if(!cache_addr_range.inrange(snap->pc))
             cache_addr_range = table->find_codeobj_in_range(snap->pc);
 
-        pc_sample.pc.loaded_code_object_id     = cache_addr_range.id;
-        pc_sample.pc.loaded_code_object_offset = snap->pc - cache_addr_range.addr;
+        pc_sample.pc.code_object_id     = cache_addr_range.id;
+        pc_sample.pc.code_object_offset = snap->pc - cache_addr_range.addr;
 
         try
         {
             Parser::trap_correlation_id_t trap{.raw = snap->correlation_id};
-            pc_sample.correlation_id = corr_map->get(device, trap);
+            auto                          dispatch_correlation_ids = corr_map->get(device, trap);
+            pc_sample.dispatch_id    = dispatch_correlation_ids.dispatch_id;
+            pc_sample.correlation_id = dispatch_correlation_ids.correlation_id;
         } catch(std::exception& e)
         {
+            // TODO: introduce ROCPROFILER_DISPATCH_ID_INTERNAL_NONE
+            pc_sample.dispatch_id    = 0;
             pc_sample.correlation_id = {.internal = ROCPROFILER_CORRELATION_ID_INTERNAL_NONE,
                                         .external = rocprofiler_user_data_t{
                                             .value = ROCPROFILER_CORRELATION_ID_INTERNAL_NONE}};
@@ -251,13 +260,13 @@ add_upcoming_samples(const device_handle               device,
     return status;
 }
 
-template <typename GFXIP>
+template <typename GFXIP, typename PcSamplingRecordT>
 inline pcsample_status_t
-_parse_buffer(generic_sample_t*       buffer,
-              uint64_t                buffer_size,
-              user_callback_t         callback,
-              void*                   userdata,
-              Parser::CorrelationMap* corr_map)
+_parse_buffer(generic_sample_t*                  buffer,
+              uint64_t                           buffer_size,
+              user_callback_t<PcSamplingRecordT> callback,
+              void*                              userdata,
+              Parser::CorrelationMap*            corr_map)
 {
     // Maximum size
     uint64_t          index  = 0;
@@ -283,26 +292,31 @@ _parse_buffer(generic_sample_t*       buffer,
                 uint64_t pkt_counter = pkt.num_samples;
                 if(index + pkt_counter > buffer_size) return PCSAMPLE_STATUS_OUT_OF_BOUNDS_ERROR;
 
-                bool bIsHostTrap = pkt.which_sample_type == AMD_HOST_TRAP_V1;
+                // I don't think we need this.
+                // bool bIsHostTrap = pkt.which_sample_type == AMD_HOST_TRAP_V1;
 
                 while(pkt_counter > 0)
                 {
-                    rocprofiler_pc_sampling_record_t* samples = nullptr;
+                    PcSamplingRecordT* samples = nullptr;
                     uint64_t available_samples = callback(&samples, pkt_counter, userdata);
 
                     if(available_samples == 0 || available_samples > pkt_counter)
                         return PCSAMPLE_STATUS_CALLBACK_ERROR;
 
-                    if(bIsHostTrap)
-                    {
-                        status |= add_upcoming_samples<true, GFXIP>(
-                            pkt.device, buffer + index, available_samples, corr_map, samples);
-                    }
-                    else
-                    {
-                        status |= add_upcoming_samples<false, GFXIP>(
-                            pkt.device, buffer + index, available_samples, corr_map, samples);
-                    }
+                    // I don't think we need if-else here
+                    // if(bIsHostTrap)
+                    // {
+                    //     status |= add_upcoming_samples<GFXIP>(
+                    //         pkt.device, buffer + index, available_samples, corr_map, samples);
+                    // }
+                    // else
+                    // {
+                    //     status |= add_upcoming_samples<GFXIP>(
+                    //         pkt.device, buffer + index, available_samples, corr_map, samples);
+                    // }
+
+                    status |= add_upcoming_samples<GFXIP>(
+                        pkt.device, buffer + index, available_samples, corr_map, samples);
 
                     index += available_samples;
                     pkt_counter -= available_samples;
@@ -329,19 +343,20 @@ _parse_buffer(generic_sample_t*       buffer,
  * a size smaller than requested, then it may be called again requesting more memory.
  * @param[in] userdata parameter forwarded to the user callback.
  */
-pcsample_status_t inline parse_buffer(generic_sample_t* buffer,
-                                      uint64_t          buffer_size,
-                                      int               gfxip_major,
-                                      user_callback_t   callback,
-                                      void*             userdata)
+template <typename PcSamplingRecordT>
+pcsample_status_t inline parse_buffer(generic_sample_t*                  buffer,
+                                      uint64_t                           buffer_size,
+                                      int                                gfxip_major,
+                                      user_callback_t<PcSamplingRecordT> callback,
+                                      void*                              userdata)
 {
     static auto corr_map = std::make_unique<Parser::CorrelationMap>();
 
-    auto parseSample_func = _parse_buffer<GFX9>;
+    auto parseSample_func = _parse_buffer<GFX9, PcSamplingRecordT>;
     if(gfxip_major == 9)
-        parseSample_func = _parse_buffer<GFX9>;
+        parseSample_func = _parse_buffer<GFX9, PcSamplingRecordT>;
     else if(gfxip_major == 11)
-        parseSample_func = _parse_buffer<GFX11>;
+        parseSample_func = _parse_buffer<GFX11, PcSamplingRecordT>;
     else
         return PCSAMPLE_STATUS_INVALID_GFXIP;
 

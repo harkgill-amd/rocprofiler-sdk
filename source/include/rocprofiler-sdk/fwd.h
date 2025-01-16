@@ -1,6 +1,6 @@
 // MIT License
 //
-// Copyright (c) 2023 Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2024 Advanced Micro Devices, Inc. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -23,8 +23,6 @@
 #pragma once
 
 #include <rocprofiler-sdk/defines.h>
-
-#include <hsa/hsa_amd_tool.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -68,6 +66,7 @@ typedef enum  // NOLINT(performance-enum-size)
                                                    ///< into active array failed)
     ROCPROFILER_STATUS_ERROR_CONTEXT_CONFLICT,  ///< Context operation failed due to a conflict with
                                                 ///< another context
+    ROCPROFILER_STATUS_ERROR_CONTEXT_ID_NOT_ZERO,  ///< Context ID is not initialized to zero
     ROCPROFILER_STATUS_ERROR_BUFFER_BUSY,  ///< buffer operation failed because it currently busy
                                            ///< handling another request (e.g. flushing)
     ROCPROFILER_STATUS_ERROR_SERVICE_ALREADY_CONFIGURED,  ///< service has already been configured
@@ -107,6 +106,7 @@ typedef enum  // NOLINT(performance-enum-size)
                                              ///< status code for more information.
     ROCPROFILER_STATUS_ERROR_EXCEEDS_HW_LIMIT,          ///< Exceeds hardware limits for collection.
     ROCPROFILER_STATUS_ERROR_AGENT_ARCH_NOT_SUPPORTED,  ///< Agent HW architecture not supported.
+    ROCPROFILER_STATUS_ERROR_PERMISSION_DENIED,         ///< Permission denied.
     ROCPROFILER_STATUS_LAST,
 } rocprofiler_status_t;
 
@@ -168,9 +168,14 @@ typedef enum  // NOLINT(performance-enum-size)
     ROCPROFILER_CALLBACK_TRACING_MARKER_NAME_API,     ///< @see ::rocprofiler_marker_name_api_id_t
     ROCPROFILER_CALLBACK_TRACING_CODE_OBJECT,     ///< @see ::rocprofiler_code_object_operation_t
     ROCPROFILER_CALLBACK_TRACING_SCRATCH_MEMORY,  ///< @see ::rocprofiler_scratch_memory_operation_t
-    ROCPROFILER_CALLBACK_TRACING_KERNEL_DISPATCH,  ///< Callbacks for kernel dispatches
-    ROCPROFILER_CALLBACK_TRACING_MEMORY_COPY,      ///< @see ::rocprofiler_memory_copy_operation_t
-    ROCPROFILER_CALLBACK_TRACING_RCCL_API,         ///< @RCCL tracing
+    ROCPROFILER_CALLBACK_TRACING_KERNEL_DISPATCH,    ///< Callbacks for kernel dispatches
+    ROCPROFILER_CALLBACK_TRACING_MEMORY_COPY,        ///< @see ::rocprofiler_memory_copy_operation_t
+    ROCPROFILER_CALLBACK_TRACING_RCCL_API,           ///< RCCL tracing
+    ROCPROFILER_CALLBACK_TRACING_OMPT,               ///< @see ::rocprofiler_ompt_operation_t
+    ROCPROFILER_CALLBACK_TRACING_MEMORY_ALLOCATION,  ///< @see
+                                                     ///< ::rocprofiler_memory_allocation_operation_t
+    ROCPROFILER_CALLBACK_TRACING_RUNTIME_INITIALIZATION,  ///< Callback notifying that a runtime
+                                                          ///< library has been initialized
     ROCPROFILER_CALLBACK_TRACING_LAST,
 } rocprofiler_callback_tracing_kind_t;
 
@@ -196,22 +201,29 @@ typedef enum  // NOLINT(performance-enum-size)
     ROCPROFILER_BUFFER_TRACING_SCRATCH_MEMORY,      ///< Buffer scratch memory reclaimation info
     ROCPROFILER_BUFFER_TRACING_CORRELATION_ID_RETIREMENT,  ///< Correlation ID in no longer in use
     ROCPROFILER_BUFFER_TRACING_RCCL_API,                   ///< RCCL tracing
+    ROCPROFILER_BUFFER_TRACING_OMPT,                       ///< @see ::rocprofiler_ompt_operation_t
+    ROCPROFILER_BUFFER_TRACING_MEMORY_ALLOCATION,          ///< @see
+                                                   ///< ::rocprofiler_memory_allocation_operation_t
+    ROCPROFILER_BUFFER_TRACING_RUNTIME_INITIALIZATION,  ///< Record indicating a runtime library has
+                                                        ///< been initialized. @see
+                                                        ///< ::rocprofiler_runtime_initialization_operation_t
     ROCPROFILER_BUFFER_TRACING_LAST,
 } rocprofiler_buffer_tracing_kind_t;
 
 /**
- * @brief ROCProfiler Code Object Tracer Operation.
+ * @brief ROCProfiler Code Object Tracer Operations.
  */
 typedef enum  // NOLINT(performance-enum-size)
 {
     ROCPROFILER_CODE_OBJECT_NONE = 0,  ///< Unknown code object operation
     ROCPROFILER_CODE_OBJECT_LOAD,      ///< Code object containing kernel symbols
-    ROCPROFILER_CODE_OBJECT_DEVICE_KERNEL_SYMBOL_REGISTER,  ///< Kernel symbols
+    ROCPROFILER_CODE_OBJECT_DEVICE_KERNEL_SYMBOL_REGISTER,  ///< Kernel symbols - Device
+    ROCPROFILER_CODE_OBJECT_HOST_KERNEL_SYMBOL_REGISTER,    ///< Kernel symbols - Host
     ROCPROFILER_CODE_OBJECT_LAST,
 } rocprofiler_code_object_operation_t;
 
 /**
- * @brief Memory Copy Operation.
+ * @brief Memory Copy Operations.
  */
 typedef enum  // NOLINT(performance-enum-size)
 {
@@ -224,19 +236,17 @@ typedef enum  // NOLINT(performance-enum-size)
 } rocprofiler_memory_copy_operation_t;
 
 /**
- * @brief Page migration event.
+ * @brief Memory Allocation Operation.
  */
 typedef enum  // NOLINT(performance-enum-size)
 {
-    ROCPROFILER_PAGE_MIGRATION_NONE = 0,  ///< Unknown event
-    ROCPROFILER_PAGE_MIGRATION_PAGE_MIGRATE,
-    ROCPROFILER_PAGE_MIGRATION_PAGE_FAULT,
-    ROCPROFILER_PAGE_MIGRATION_QUEUE_SUSPEND,
-    ROCPROFILER_PAGE_MIGRATION_UNMAP_FROM_GPU,
-    // Any and all events, from all processes. Requires superuser
-    // ROCPROFILER_PAGE_MIGRATION_ANY_ALL_PROCESSES,
-    ROCPROFILER_PAGE_MIGRATION_LAST,
-} rocprofiler_page_migration_operation_t;
+    ROCPROFILER_MEMORY_ALLOCATION_NONE = 0,       ///< Unknown memory allocation function
+    ROCPROFILER_MEMORY_ALLOCATION_ALLOCATE,       ///< Allocate memory function
+    ROCPROFILER_MEMORY_ALLOCATION_VMEM_ALLOCATE,  ///< Allocate vmem memory handle
+    ROCPROFILER_MEMORY_ALLOCATION_FREE,           ///< Free memory function
+    ROCPROFILER_MEMORY_ALLOCATION_VMEM_FREE,      ///< Release vmem memory handle
+    ROCPROFILER_MEMORY_ALLOCATION_LAST,
+} rocprofiler_memory_allocation_operation_t;
 
 /**
  * @brief ROCProfiler Kernel Dispatch Tracing Operation Types.
@@ -319,6 +329,23 @@ typedef enum  // NOLINT(performance-enum-size)
 } rocprofiler_buffer_policy_t;
 
 /**
+ * @brief Page migration event.
+ */
+typedef enum  // NOLINT(performance-enum-size)
+{
+    ROCPROFILER_PAGE_MIGRATION_NONE = 0,  ///< Unknown event
+    ROCPROFILER_PAGE_MIGRATION_PAGE_MIGRATE_START,
+    ROCPROFILER_PAGE_MIGRATION_PAGE_MIGRATE_END,
+    ROCPROFILER_PAGE_MIGRATION_PAGE_FAULT_START,
+    ROCPROFILER_PAGE_MIGRATION_PAGE_FAULT_END,
+    ROCPROFILER_PAGE_MIGRATION_QUEUE_EVICTION,
+    ROCPROFILER_PAGE_MIGRATION_QUEUE_RESTORE,
+    ROCPROFILER_PAGE_MIGRATION_UNMAP_FROM_GPU,
+    ROCPROFILER_PAGE_MIGRATION_DROPPED_EVENT,
+    ROCPROFILER_PAGE_MIGRATION_LAST,
+} rocprofiler_page_migration_operation_t;
+
+/**
  * @brief Scratch event kind
  */
 typedef enum
@@ -329,19 +356,6 @@ typedef enum
     ROCPROFILER_SCRATCH_MEMORY_ASYNC_RECLAIM,  ///< Scratch memory asynchronously reclaimed
     ROCPROFILER_SCRATCH_MEMORY_LAST,
 } rocprofiler_scratch_memory_operation_t;
-
-/**
- * @brief Allocation flags for @see rocprofiler_buffer_tracing_scratch_memory_record_t
- */
-typedef enum
-{
-    ROCPROFILER_SCRATCH_ALLOC_FLAG_NONE = 0,
-    ROCPROFILER_SCRATCH_ALLOC_FLAG_USE_ONCE =
-        HSA_AMD_EVENT_SCRATCH_ALLOC_FLAG_USE_ONCE,  ///< This scratch allocation is only valid for 1
-                                                    ///< dispatch.
-    ROCPROFILER_SCRATCH_ALLOC_FLAG_ALT =
-        HSA_AMD_EVENT_SCRATCH_ALLOC_FLAG_ALT,  ///< Used alternate scratch instead of main scratch
-} rocprofiler_scratch_alloc_flag_t;
 
 /**
  * @brief Enumeration for specifying runtime libraries supported by rocprofiler. This enumeration is
@@ -374,6 +388,19 @@ typedef enum
 } rocprofiler_intercept_table_t;
 
 /**
+ * @brief ROCProfiler Runtime Initialization Tracer Operations.
+ */
+typedef enum  // NOLINT(performance-enum-size)
+{
+    ROCPROFILER_RUNTIME_INITIALIZATION_NONE = 0,  ///< Unknown runtime initialization
+    ROCPROFILER_RUNTIME_INITIALIZATION_HSA,       ///< Application loaded HSA runtime
+    ROCPROFILER_RUNTIME_INITIALIZATION_HIP,       ///< Application loaded HIP runtime
+    ROCPROFILER_RUNTIME_INITIALIZATION_MARKER,    ///< Application loaded Marker (ROCTx) runtime
+    ROCPROFILER_RUNTIME_INITIALIZATION_RCCL,      ///< Application loaded RCCL runtime
+    ROCPROFILER_RUNTIME_INITIALIZATION_LAST,
+} rocprofiler_runtime_initialization_operation_t;
+
+/**
  * @brief Enumeration for specifying the counter info struct version you want.
  */
 typedef enum
@@ -390,13 +417,13 @@ typedef enum
 typedef enum
 {
     ROCPROFILER_COUNTER_RECORD_NONE = 0,
-    ROCPROFILER_COUNTER_RECORD_PROFILE_COUNTING_DISPATCH_HEADER,  ///< ::rocprofiler_profile_counting_dispatch_record_t
+    ROCPROFILER_COUNTER_RECORD_PROFILE_COUNTING_DISPATCH_HEADER,  ///< ::rocprofiler_dispatch_counting_service_record_t
     ROCPROFILER_COUNTER_RECORD_VALUE,
     ROCPROFILER_COUNTER_RECORD_LAST,
 
     /// @var ROCPROFILER_COUNTER_RECORD_KIND_DISPATCH_PROFILE_HEADER
     /// @brief Indicates the payload type is of type
-    /// ::rocprofiler_profile_counting_dispatch_record_t
+    /// ::rocprofiler_dispatch_counting_service_record_t
 } rocprofiler_counter_record_kind_t;
 
 /**
@@ -405,7 +432,9 @@ typedef enum
 typedef enum
 {
     ROCPROFILER_COUNTER_FLAG_NONE = 0,
-    ROCPROFILER_COUNTER_FLAG_ASYNC,  ///< Do not wait for completion before returning.
+    ROCPROFILER_COUNTER_FLAG_ASYNC,              ///< Do not wait for completion before returning.
+    ROCPROFILER_COUNTER_FLAG_APPEND_DEFINITION,  ///< Append the counter definition to the system
+                                                 ///< provided counter definition file.
     ROCPROFILER_COUNTER_FLAG_LAST,
 } rocprofiler_counter_flag_t;
 
@@ -416,7 +445,8 @@ typedef enum
 typedef enum
 {
     ROCPROFILER_PC_SAMPLING_RECORD_NONE = 0,
-    ROCPROFILER_PC_SAMPLING_RECORD_SAMPLE,  ///< ::rocprofiler_pc_sampling_record_t
+    ROCPROFILER_PC_SAMPLING_RECORD_HOST_TRAP_V0_SAMPLE,  ///< ::rocprofiler_pc_sampling_record_host_trap_v0_t
+    ROCPROFILER_PC_SAMPLING_RECORD_STOCHASTIC_V0_SAMPLE,  ///< for the future use
     ROCPROFILER_PC_SAMPLING_RECORD_LAST,
 } rocprofiler_pc_sampling_record_kind_t;
 
@@ -430,11 +460,6 @@ typedef enum
  * @brief ROCProfiler Timestamp.
  */
 typedef uint64_t rocprofiler_timestamp_t;
-
-/**
- * @brief ROCProfiler Address.
- */
-typedef uint64_t rocprofiler_address_t;
 
 /**
  * @brief Thread ID. Value will be equivalent to `syscall(__NR_gettid)`
@@ -491,6 +516,16 @@ typedef union rocprofiler_user_data_t
     uint64_t value;  ///< usage example: set to process id, thread id, etc.
     void*    ptr;    ///< usage example: set to address of data allocation
 } rocprofiler_user_data_t;
+
+/**
+ * @brief Stores memory address for profiling
+ *
+ */
+typedef union rocprofiler_address_t
+{
+    uint64_t value;  ///< usage example: store address in uint64_t format
+    void*    ptr;    ///< usage example: generic form of address
+} rocprofiler_address_t;
 
 //--------------------------------------------------------------------------------------//
 //
@@ -688,15 +723,16 @@ typedef struct
     double                            counter_value;  ///< counter value
     rocprofiler_dispatch_id_t         dispatch_id;
     rocprofiler_user_data_t           user_data;
+    rocprofiler_agent_id_t            agent_id;
 
     /// @var dispatch_id
     /// @brief A value greater than zero indicates that this counter record is associated with a
     /// specific dispatch.
     ///
     /// This value can be mapped to a dispatch via the `dispatch_info` field (@see
-    /// ::rocprofiler_kernel_dispatch_info_t) of a ::rocprofiler_profile_counting_dispatch_data_t
+    /// ::rocprofiler_kernel_dispatch_info_t) of a ::rocprofiler_dispatch_counting_service_data_t
     /// instance (provided during callback for profile config) or a
-    /// ::rocprofiler_profile_counting_dispatch_record_t records (which will be insert into the
+    /// ::rocprofiler_dispatch_counting_service_record_t records (which will be insert into the
     /// buffer prior to the associated ::rocprofiler_record_counter_t records).
 } rocprofiler_record_counter_t;
 

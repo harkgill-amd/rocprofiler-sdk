@@ -65,19 +65,19 @@ ROCPROFILER_EXTERN_C_FINI
 /** @} */
 
 #include "rocprofiler-sdk/agent.h"
-#include "rocprofiler-sdk/agent_profile.h"
 #include "rocprofiler-sdk/buffer.h"
 #include "rocprofiler-sdk/buffer_tracing.h"
 #include "rocprofiler-sdk/callback_tracing.h"
 #include "rocprofiler-sdk/context.h"
 #include "rocprofiler-sdk/counters.h"
-#include "rocprofiler-sdk/dispatch_profile.h"
+#include "rocprofiler-sdk/device_counting_service.h"
+#include "rocprofiler-sdk/dispatch_counting_service.h"
 #include "rocprofiler-sdk/external_correlation.h"
 #include "rocprofiler-sdk/hip.h"
 #include "rocprofiler-sdk/hsa.h"
 #include "rocprofiler-sdk/intercept_table.h"
 #include "rocprofiler-sdk/internal_threading.h"
-// #include "rocprofiler-sdk/marker.h"
+#include "rocprofiler-sdk/marker.h"
 #include "rocprofiler-sdk/pc_sampling.h"
 #include "rocprofiler-sdk/profile_config.h"
 // #include "rocprofiler-sdk/spm.h"
@@ -86,7 +86,7 @@ ROCPROFILER_EXTERN_C_INIT
 
 /**
  * @defgroup MISCELLANEOUS_GROUP Miscellaneous Utility Functions
- *
+ * @brief utility functions for library
  * @{
  */
 

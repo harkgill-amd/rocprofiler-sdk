@@ -30,7 +30,7 @@ ROCPROFILER_EXTERN_C_INIT
 /**
  * @defgroup REGISTRATION_GROUP Tool registration
  *
- * Data types and functions for tool registration with rocprofiler
+ * @brief Data types and functions for tool registration with rocprofiler
  * @{
  */
 
@@ -153,7 +153,7 @@ rocprofiler_is_finalized(int* status) ROCPROFILER_API ROCPROFILER_NONNULL(1);
  *
  *      assert(*static_cast<int*>(tool_data) == 1234 && "tool_data is wrong");
  *
- *      rocprofiler_context_id_t ctx;
+ *      rocprofiler_context_id_t ctx{0};
  *      rocprofiler_create_context(&ctx);
  *
  *      if(int valid_ctx = 0;

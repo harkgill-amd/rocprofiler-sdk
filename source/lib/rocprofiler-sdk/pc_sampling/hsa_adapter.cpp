@@ -105,6 +105,7 @@ amd_intercept_marker_handler_callback(const struct amd_aql_intercept_marker_s* p
     dispatch_pkt.write_index = packet_id;
     dispatch_pkt.correlation_id = {.internal = internal_correlation,
                                    .external = external_correlation};
+    dispatch_pkt.dispatch_id    = packet->user_data[2];
 
     auto* parser = pcs_session->parser.get();
     if(parser->shouldFlipRocrBuffer(dispatch_pkt))
@@ -187,7 +188,8 @@ data_ready_callback(void*                                client_callback_data,
 rocprofiler::hsa::rocprofiler_packet
 generate_marker_packet_for_kernel(
     context::correlation_id*                      correlation_id,
-    const tracing::external_correlation_id_map_t& external_correlation_ids)
+    const tracing::external_correlation_id_map_t& external_correlation_ids,
+    const rocprofiler_dispatch_id_t               dispatch_id)
 {
     // This function executes for each kernel dispatched to the agent on which
     // the PC sampling service is configured.
@@ -230,6 +232,9 @@ generate_marker_packet_for_kernel(
         // No external correlation ID
         marker_pkt.user_data[1] = 0;
     }
+
+    // dispatch_id should always be present
+    marker_pkt.user_data[2] = dispatch_id;
 
     return rocprofiler::hsa::rocprofiler_packet(marker_pkt);
 }
@@ -342,12 +347,12 @@ pc_sampling_service_finish_configuration(context::pc_sampling_service* service)
            const rocprofiler::hsa::Queue::queue_info_session_t::external_corr_id_map_t&,
            const context::correlation_id*) { return nullptr; },
         // Completion CB
-        [](const rocprofiler::hsa::Queue&                       q,
-           rocprofiler::hsa::rocprofiler_packet                 kern_pkt,
-           const rocprofiler::hsa::Queue::queue_info_session_t& session,
+        [](const rocprofiler::hsa::Queue&                                  q,
+           rocprofiler::hsa::rocprofiler_packet                            kern_pkt,
+           std::shared_ptr<rocprofiler::hsa::Queue::queue_info_session_t>& session,
            rocprofiler::hsa::inst_pkt_t&,
            kernel_dispatch::profiling_time) {
-            kernel_completion_cb(q.get_agent().get_rocp_agent(), kern_pkt, session);
+            kernel_completion_cb(q.get_agent().get_rocp_agent(), kern_pkt, *session);
         });
 }
 

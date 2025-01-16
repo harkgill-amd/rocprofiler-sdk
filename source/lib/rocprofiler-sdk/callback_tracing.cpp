@@ -20,6 +20,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#include "lib/rocprofiler-sdk/code_object/code_object.hpp"
+#include "lib/rocprofiler-sdk/context/context.hpp"
+#include "lib/rocprofiler-sdk/context/domain.hpp"
+#include "lib/rocprofiler-sdk/hip/hip.hpp"
+#include "lib/rocprofiler-sdk/hsa/async_copy.hpp"
+#include "lib/rocprofiler-sdk/hsa/hsa.hpp"
+#include "lib/rocprofiler-sdk/hsa/memory_allocation.hpp"
+#include "lib/rocprofiler-sdk/hsa/scratch_memory.hpp"
+#include "lib/rocprofiler-sdk/kernel_dispatch/kernel_dispatch.hpp"
+#include "lib/rocprofiler-sdk/marker/marker.hpp"
+#include "lib/rocprofiler-sdk/ompt/ompt.hpp"
+#include "lib/rocprofiler-sdk/rccl/rccl.hpp"
+#include "lib/rocprofiler-sdk/registration.hpp"
+#include "lib/rocprofiler-sdk/runtime_initialization.hpp"
+
 #include <rocprofiler-sdk/callback_tracing.h>
 #include <rocprofiler-sdk/fwd.h>
 #include <rocprofiler-sdk/hip/table_id.h>
@@ -27,18 +42,6 @@
 #include <rocprofiler-sdk/marker/table_id.h>
 #include <rocprofiler-sdk/rccl/table_id.h>
 #include <rocprofiler-sdk/rocprofiler.h>
-
-#include "lib/rocprofiler-sdk/code_object/code_object.hpp"
-#include "lib/rocprofiler-sdk/context/context.hpp"
-#include "lib/rocprofiler-sdk/context/domain.hpp"
-#include "lib/rocprofiler-sdk/hip/hip.hpp"
-#include "lib/rocprofiler-sdk/hsa/async_copy.hpp"
-#include "lib/rocprofiler-sdk/hsa/hsa.hpp"
-#include "lib/rocprofiler-sdk/hsa/scratch_memory.hpp"
-#include "lib/rocprofiler-sdk/kernel_dispatch/kernel_dispatch.hpp"
-#include "lib/rocprofiler-sdk/marker/marker.hpp"
-#include "lib/rocprofiler-sdk/rccl/rccl.hpp"
-#include "lib/rocprofiler-sdk/registration.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -81,7 +84,10 @@ ROCPROFILER_CALLBACK_TRACING_KIND_STRING(CODE_OBJECT)
 ROCPROFILER_CALLBACK_TRACING_KIND_STRING(SCRATCH_MEMORY)
 ROCPROFILER_CALLBACK_TRACING_KIND_STRING(KERNEL_DISPATCH)
 ROCPROFILER_CALLBACK_TRACING_KIND_STRING(MEMORY_COPY)
+ROCPROFILER_CALLBACK_TRACING_KIND_STRING(MEMORY_ALLOCATION)
 ROCPROFILER_CALLBACK_TRACING_KIND_STRING(RCCL_API)
+ROCPROFILER_CALLBACK_TRACING_KIND_STRING(OMPT)
+ROCPROFILER_CALLBACK_TRACING_KIND_STRING(RUNTIME_INITIALIZATION)
 
 template <size_t Idx, size_t... Tail>
 std::pair<const char*, size_t>
@@ -250,6 +256,20 @@ rocprofiler_query_callback_tracing_kind_operation_name(rocprofiler_callback_trac
             val = rocprofiler::hsa::async_copy::name_by_id(operation);
             break;
         }
+        case ROCPROFILER_CALLBACK_TRACING_OMPT:
+        {
+            val = rocprofiler::ompt::name_by_id(operation);
+            break;
+        }
+        case ROCPROFILER_CALLBACK_TRACING_MEMORY_ALLOCATION:
+        {
+            val = rocprofiler::hsa::memory_allocation::name_by_id(operation);
+            break;
+        }
+        case ROCPROFILER_CALLBACK_TRACING_RUNTIME_INITIALIZATION:
+        {
+            val = rocprofiler::runtime_init::name_by_id(operation);
+        }
     };
 
     if(!val)
@@ -363,6 +383,20 @@ rocprofiler_iterate_callback_tracing_kind_operations(
         {
             ops = rocprofiler::hsa::async_copy::get_ids();
             break;
+        }
+        case ROCPROFILER_CALLBACK_TRACING_OMPT:
+        {
+            ops = rocprofiler::ompt::get_ids();
+            break;
+        }
+        case ROCPROFILER_CALLBACK_TRACING_MEMORY_ALLOCATION:
+        {
+            ops = rocprofiler::hsa::memory_allocation::get_ids();
+            break;
+        }
+        case ROCPROFILER_CALLBACK_TRACING_RUNTIME_INITIALIZATION:
+        {
+            ops = rocprofiler::runtime_init::get_ids();
         }
     };
 
@@ -489,11 +523,23 @@ rocprofiler_iterate_callback_tracing_kind_operation_args(
                 user_data);
             return ROCPROFILER_STATUS_SUCCESS;
         }
+        case ROCPROFILER_CALLBACK_TRACING_OMPT:
+        {
+            rocprofiler::ompt::iterate_args(
+                record.operation,
+                *static_cast<rocprofiler_callback_tracing_ompt_data_t*>(record.payload),
+                callback,
+                max_deref,
+                user_data);
+            return ROCPROFILER_STATUS_SUCCESS;
+        }
         case ROCPROFILER_CALLBACK_TRACING_SCRATCH_MEMORY:
         case ROCPROFILER_CALLBACK_TRACING_CODE_OBJECT:
         case ROCPROFILER_CALLBACK_TRACING_KERNEL_DISPATCH:
         case ROCPROFILER_CALLBACK_TRACING_MEMORY_COPY:
+        case ROCPROFILER_CALLBACK_TRACING_MEMORY_ALLOCATION:
         case ROCPROFILER_CALLBACK_TRACING_RCCL_API:
+        case ROCPROFILER_CALLBACK_TRACING_RUNTIME_INITIALIZATION:
         {
             return ROCPROFILER_STATUS_ERROR_NOT_IMPLEMENTED;
         }

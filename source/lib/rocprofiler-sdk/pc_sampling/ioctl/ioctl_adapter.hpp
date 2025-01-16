@@ -1,6 +1,6 @@
 // MIT License
 //
-// Copyright (c) 2023 ROCm Developer Tools
+// Copyright (c) 2024 ROCm Developer Tools
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -45,6 +45,8 @@ ioctl_pcs_create(const rocprofiler_agent_t*       agent,
                  uint64_t                         interval,
                  uint32_t*                        ioctl_pcs_id);
 
+int
+get_kfd_fd();
 }  // namespace ioctl
 }  // namespace pc_sampling
 }  // namespace rocprofiler

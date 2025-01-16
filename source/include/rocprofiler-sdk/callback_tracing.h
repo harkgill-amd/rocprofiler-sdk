@@ -27,6 +27,7 @@
 #include <rocprofiler-sdk/hip.h>
 #include <rocprofiler-sdk/hsa.h>
 #include <rocprofiler-sdk/marker.h>
+#include <rocprofiler-sdk/ompt.h>
 #include <rocprofiler-sdk/rccl.h>
 
 #include <hsa/hsa.h>
@@ -77,6 +78,15 @@ typedef struct
     rocprofiler_hip_api_args_t   args;
     rocprofiler_hip_api_retval_t retval;
 } rocprofiler_callback_tracing_hip_api_data_t;
+
+/**
+ * @brief ROCProfiler OMPT Callback Data
+ */
+typedef struct
+{
+    uint64_t                size;  ///< size of this struct
+    rocprofiler_ompt_args_t args;
+} rocprofiler_callback_tracing_ompt_data_t;
 
 /**
  * @brief ROCProfiler Marker Tracer Callback Data.
@@ -171,6 +181,27 @@ typedef struct
     uint32_t accum_vgpr_count;      ///< Accum vector general purpose register count
 
 } rocprofiler_callback_tracing_code_object_kernel_symbol_register_data_t;
+// rename struct
+
+typedef struct
+{
+    uint64_t              size;              ///< size of this struct
+    uint64_t              host_function_id;  ///< unique host function identifier value
+    uint64_t              kernel_id;         ///< unique symbol identifier value
+    uint64_t              code_object_id;    ///< parent unique code object identifier
+    rocprofiler_address_t host_function;     ///< kernel host function pointer
+    rocprofiler_address_t modules;           ///< reference address where modules will be loaded
+    const char*           device_function;
+    uint32_t              thread_limit;    ///< thread limit
+    rocprofiler_dim3_t    thread_ids;      ///< thread ids address
+    rocprofiler_dim3_t    block_ids;       ///< block ids address
+    rocprofiler_dim3_t    block_dims;      ///< block dimensions address
+    rocprofiler_dim3_t    grid_dims;       ///< grid dimensions address
+    uint64_t              workgroup_size;  ///< workgroup size address
+
+    /// @var device_function
+    /// @brief device function name used to map the metadata during kernel launch
+} rocprofiler_callback_tracing_code_object_host_kernel_symbol_register_data_t;
 
 /**
  * @brief ROCProfiler Kernel Dispatch Callback Tracer Record.
@@ -201,6 +232,19 @@ typedef struct
 } rocprofiler_callback_tracing_memory_copy_data_t;
 
 /**
+ * @brief ROCProfiler Memory Allocation Tracer Record.
+ */
+typedef struct
+{
+    uint64_t                size;             ///< size of this struct
+    rocprofiler_timestamp_t start_timestamp;  ///< start time in nanoseconds
+    rocprofiler_timestamp_t end_timestamp;    ///< end time in nanoseconds
+    rocprofiler_agent_id_t  agent_id;         ///< agent id for memory allocation
+    rocprofiler_address_t   address;          ///< starting address for memory allocation
+    uint64_t                allocation_size;  ///< size of memory allocation
+} rocprofiler_callback_tracing_memory_allocation_data_t;
+
+/**
  * @brief ROCProfiler Scratch Memory Callback Data.
  */
 typedef struct rocprofiler_callback_tracing_scratch_memory_data_t
@@ -212,6 +256,21 @@ typedef struct rocprofiler_callback_tracing_scratch_memory_data_t
     hsa_amd_tool_event_kind_t         args_kind;
     rocprofiler_scratch_memory_args_t args;
 } rocprofiler_callback_tracing_scratch_memory_data_t;
+
+/**
+ * @brief ROCProfiler Runtime Initialization Data.
+ */
+typedef struct rocprofiler_callback_tracing_runtime_initialization_data_t
+{
+    uint64_t size;  ///< size of this struct
+    uint64_t version;
+    uint64_t instance;  ///< Number of times this runtime had been loaded previously
+
+    /// @var version
+    /// @brief The version number of the library
+    ///
+    /// Version number is encoded as: (10000 * MAJOR) + (100 * MINOR) + PATCH
+} rocprofiler_callback_tracing_runtime_initialization_data_t;
 
 /**
  * @brief API Tracing callback function. This function is invoked twice per API function: once

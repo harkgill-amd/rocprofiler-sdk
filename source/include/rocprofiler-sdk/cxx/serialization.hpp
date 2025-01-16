@@ -30,6 +30,8 @@
 #include <rocprofiler-sdk/internal_threading.h>
 #include <rocprofiler-sdk/rocprofiler.h>
 #include <rocprofiler-sdk/cxx/name_info.hpp>
+#include <rocprofiler-sdk/cxx/perfetto.hpp>
+#include <rocprofiler-sdk/cxx/utility.hpp>
 
 #include <cereal/archives/binary.hpp>
 #include <cereal/archives/json.hpp>
@@ -50,7 +52,6 @@
 #include <cereal/types/set.hpp>
 #include <cereal/types/stack.hpp>
 #include <cereal/types/string.hpp>
-#include <cereal/types/tuple.hpp>
 #include <cereal/types/unordered_map.hpp>
 #include <cereal/types/unordered_set.hpp>
 #include <cereal/types/utility.hpp>
@@ -59,10 +60,12 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #define ROCP_SDK_SAVE_DATA_FIELD(FIELD)       ar(make_nvp(#FIELD, data.FIELD))
 #define ROCP_SDK_SAVE_DATA_VALUE(NAME, VALUE) ar(make_nvp(NAME, data.VALUE))
+#define ROCP_SDK_SAVE_VALUE(NAME, VALUE)      ar(make_nvp(NAME, VALUE))
 #define ROCP_SDK_SAVE_DATA_CSTR(FIELD)                                                             \
     ar(make_nvp(#FIELD, std::string{data.FIELD ? data.FIELD : ""}))
 #define ROCP_SDK_SAVE_DATA_BITFIELD(NAME, VALUE)                                                   \
@@ -137,6 +140,13 @@ save(ArchiveT& ar, rocprofiler_dim3_t data)
 
 template <typename ArchiveT>
 void
+save(ArchiveT& ar, rocprofiler_address_t data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(value);
+}
+
+template <typename ArchiveT>
+void
 save(ArchiveT& ar, rocprofiler_callback_tracing_code_object_load_data_t data)
 {
     ROCP_SDK_SAVE_DATA_FIELD(size);
@@ -172,6 +182,28 @@ save(ArchiveT& ar, rocprofiler_callback_tracing_code_object_kernel_symbol_regist
     ROCP_SDK_SAVE_DATA_FIELD(kernarg_segment_alignment);
     ROCP_SDK_SAVE_DATA_FIELD(group_segment_size);
     ROCP_SDK_SAVE_DATA_FIELD(private_segment_size);
+    ROCP_SDK_SAVE_DATA_FIELD(sgpr_count);
+    ROCP_SDK_SAVE_DATA_FIELD(arch_vgpr_count);
+    ROCP_SDK_SAVE_DATA_FIELD(accum_vgpr_count);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, rocprofiler_callback_tracing_code_object_host_kernel_symbol_register_data_t data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(size);
+    ROCP_SDK_SAVE_DATA_FIELD(host_function_id);
+    ROCP_SDK_SAVE_DATA_FIELD(kernel_id);
+    ROCP_SDK_SAVE_DATA_FIELD(code_object_id);
+    ROCP_SDK_SAVE_DATA_FIELD(host_function);
+    ROCP_SDK_SAVE_DATA_FIELD(modules);
+    ROCP_SDK_SAVE_DATA_CSTR(device_function);
+    ROCP_SDK_SAVE_DATA_FIELD(thread_limit);
+    ROCP_SDK_SAVE_DATA_FIELD(thread_ids);
+    ROCP_SDK_SAVE_DATA_FIELD(block_ids);
+    ROCP_SDK_SAVE_DATA_FIELD(block_dims);
+    ROCP_SDK_SAVE_DATA_FIELD(grid_dims);
+    ROCP_SDK_SAVE_DATA_FIELD(workgroup_size);
 }
 
 template <typename ArchiveT>
@@ -301,7 +333,6 @@ save(ArchiveT& ar, rocprofiler_kernel_dispatch_info_t data)
     ROCP_SDK_SAVE_DATA_FIELD(private_segment_size);
     ROCP_SDK_SAVE_DATA_FIELD(group_segment_size);
     ROCP_SDK_SAVE_DATA_FIELD(workgroup_size);
-    ROCP_SDK_SAVE_DATA_FIELD(group_segment_size);
     ROCP_SDK_SAVE_DATA_FIELD(grid_size);
 }
 
@@ -329,6 +360,18 @@ save(ArchiveT& ar, rocprofiler_callback_tracing_memory_copy_data_t data)
 
 template <typename ArchiveT>
 void
+save(ArchiveT& ar, rocprofiler_callback_tracing_memory_allocation_data_t data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(size);
+    ROCP_SDK_SAVE_DATA_FIELD(start_timestamp);
+    ROCP_SDK_SAVE_DATA_FIELD(end_timestamp);
+    ROCP_SDK_SAVE_DATA_FIELD(agent_id);
+    ROCP_SDK_SAVE_VALUE("address", rocprofiler::sdk::utility::as_hex(data.address.value, 16));
+    ROCP_SDK_SAVE_DATA_FIELD(allocation_size);
+}
+
+template <typename ArchiveT>
+void
 save(ArchiveT& ar, rocprofiler_rccl_api_retval_t data)
 {
     ROCP_SDK_SAVE_DATA_FIELD(ncclResult_t_retval);
@@ -345,7 +388,15 @@ save(ArchiveT& ar, rocprofiler_callback_tracing_rccl_api_data_t data)
 
 template <typename ArchiveT>
 void
-save(ArchiveT& ar, rocprofiler_profile_counting_dispatch_data_t data)
+save(ArchiveT& ar, rocprofiler_callback_tracing_ompt_data_t data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(size);
+    // ROCP_SDK_SAVE_DATA_FIELD(args);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, rocprofiler_dispatch_counting_service_data_t data)
 {
     ROCP_SDK_SAVE_DATA_FIELD(size);
     ROCP_SDK_SAVE_DATA_FIELD(correlation_id);
@@ -356,7 +407,7 @@ save(ArchiveT& ar, rocprofiler_profile_counting_dispatch_data_t data)
 
 template <typename ArchiveT>
 void
-save(ArchiveT& ar, rocprofiler_profile_counting_dispatch_record_t data)
+save(ArchiveT& ar, rocprofiler_dispatch_counting_service_record_t data)
 {
     ROCP_SDK_SAVE_DATA_FIELD(size);
     ROCP_SDK_SAVE_DATA_FIELD(num_records);
@@ -430,6 +481,56 @@ save(ArchiveT& ar, rocprofiler_buffer_tracing_rccl_api_record_t data)
 
 template <typename ArchiveT>
 void
+save(ArchiveT& ar, rocprofiler_buffer_tracing_ompt_target_t data)
+{
+    ROCP_SDK_SAVE_DATA_VALUE("kind", kind);
+    ROCP_SDK_SAVE_DATA_VALUE("device", device_num);
+    ROCP_SDK_SAVE_DATA_VALUE("task_id", task_id);
+    ROCP_SDK_SAVE_DATA_VALUE("target_id", target_id);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, rocprofiler_buffer_tracing_ompt_target_data_op_t data)
+{
+    ROCP_SDK_SAVE_DATA_VALUE("host_op_id", host_op_id);
+    ROCP_SDK_SAVE_DATA_VALUE("optype", optype);
+    ROCP_SDK_SAVE_DATA_VALUE("src_device_num", src_device_num);
+    ROCP_SDK_SAVE_DATA_VALUE("dst_device_num", dst_device_num);
+    ROCP_SDK_SAVE_DATA_VALUE("bytes", bytes);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, rocprofiler_buffer_tracing_ompt_target_kernel_t data)
+{
+    ROCP_SDK_SAVE_DATA_VALUE("host_op_id", host_op_id);
+    ROCP_SDK_SAVE_DATA_VALUE("device_num", device_num);
+    ROCP_SDK_SAVE_DATA_VALUE("requested_num_teams", requested_num_teams);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, rocprofiler_buffer_tracing_ompt_record_t data)
+{
+    save_buffer_tracing_api_record(ar, data);
+
+    if(data.operation == ROCPROFILER_OMPT_ID_target_emi)
+    {
+        ROCP_SDK_SAVE_DATA_FIELD(target);
+    }
+    else if(data.operation == ROCPROFILER_OMPT_ID_target_data_op_emi)
+    {
+        ROCP_SDK_SAVE_DATA_FIELD(target_data_op);
+    }
+    else if(data.operation == ROCPROFILER_OMPT_ID_target_submit_emi)
+    {
+        ROCP_SDK_SAVE_DATA_FIELD(target_kernel);
+    }
+}
+
+template <typename ArchiveT>
+void
 save(ArchiveT& ar, rocprofiler_buffer_tracing_kernel_dispatch_record_t data)
 {
     ROCP_SDK_SAVE_DATA_FIELD(size);
@@ -460,86 +561,156 @@ save(ArchiveT& ar, rocprofiler_buffer_tracing_memory_copy_record_t data)
 
 template <typename ArchiveT>
 void
+save(ArchiveT& ar, rocprofiler_buffer_tracing_memory_allocation_record_t data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(size);
+    ROCP_SDK_SAVE_DATA_FIELD(kind);
+    ROCP_SDK_SAVE_DATA_FIELD(operation);
+    ROCP_SDK_SAVE_DATA_FIELD(thread_id);
+    ROCP_SDK_SAVE_DATA_FIELD(correlation_id);
+    ROCP_SDK_SAVE_DATA_FIELD(start_timestamp);
+    ROCP_SDK_SAVE_DATA_FIELD(end_timestamp);
+    ROCP_SDK_SAVE_DATA_FIELD(agent_id);
+    ROCP_SDK_SAVE_VALUE("address", rocprofiler::sdk::utility::as_hex(data.address.value, 16));
+    ROCP_SDK_SAVE_DATA_FIELD(allocation_size);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, const rocprofiler_page_migration_page_fault_start_t& data)
+{
+    ROCP_SDK_SAVE_DATA_BITFIELD("read_fault", read_fault);
+    ROCP_SDK_SAVE_DATA_FIELD(agent_id);
+    ROCP_SDK_SAVE_DATA_FIELD(address);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, const rocprofiler_page_migration_page_fault_end_t& data)
+{
+    ROCP_SDK_SAVE_DATA_BITFIELD("migrated", migrated);
+    ROCP_SDK_SAVE_DATA_FIELD(agent_id);
+    ROCP_SDK_SAVE_DATA_FIELD(address);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, const rocprofiler_page_migration_page_migrate_start_t& data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(start_addr);
+    ROCP_SDK_SAVE_DATA_FIELD(end_addr);
+    ROCP_SDK_SAVE_DATA_FIELD(from_agent);
+    ROCP_SDK_SAVE_DATA_FIELD(to_agent);
+    ROCP_SDK_SAVE_DATA_FIELD(prefetch_agent);
+    ROCP_SDK_SAVE_DATA_FIELD(preferred_agent);
+    ROCP_SDK_SAVE_DATA_FIELD(trigger);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, const rocprofiler_page_migration_page_migrate_end_t& data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(start_addr);
+    ROCP_SDK_SAVE_DATA_FIELD(end_addr);
+    ROCP_SDK_SAVE_DATA_FIELD(from_agent);
+    ROCP_SDK_SAVE_DATA_FIELD(to_agent);
+    ROCP_SDK_SAVE_DATA_FIELD(trigger);
+    ROCP_SDK_SAVE_DATA_FIELD(error_code);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, const rocprofiler_page_migration_queue_eviction_t& data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(agent_id);
+    ROCP_SDK_SAVE_DATA_FIELD(trigger);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, const rocprofiler_page_migration_queue_restore_t& data)
+{
+    ROCP_SDK_SAVE_DATA_BITFIELD("rescheduled", rescheduled);
+    ROCP_SDK_SAVE_DATA_FIELD(agent_id);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, const rocprofiler_page_migration_unmap_from_gpu_t& data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(start_addr);
+    ROCP_SDK_SAVE_DATA_FIELD(end_addr);
+    ROCP_SDK_SAVE_DATA_FIELD(agent_id);
+    ROCP_SDK_SAVE_DATA_FIELD(trigger);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, const rocprofiler_page_migration_dropped_event_t& data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(dropped_events_count);
+}
+
+namespace details
+{
+template <size_t Idx>
+struct save_page_migration_arg;
+
+#define ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG(ENUM_VALUE, UNION_ARG)                              \
+    template <>                                                                                    \
+    struct save_page_migration_arg<ROCPROFILER_PAGE_MIGRATION_##ENUM_VALUE>                        \
+    {                                                                                              \
+        static constexpr auto value = ROCPROFILER_PAGE_MIGRATION_##ENUM_VALUE;                     \
+        template <typename ArchiveT>                                                               \
+        void operator()(ArchiveT& ar, rocprofiler_page_migration_args_t args)                      \
+        {                                                                                          \
+            ar(make_nvp(#UNION_ARG, args.UNION_ARG));                                              \
+        }                                                                                          \
+    };
+
+ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG(NONE, none)
+ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG(PAGE_MIGRATE_START, page_migrate_start)
+ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG(PAGE_MIGRATE_END, page_migrate_end)
+ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG(PAGE_FAULT_START, page_fault_start)
+ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG(PAGE_FAULT_END, page_fault_end)
+ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG(QUEUE_EVICTION, queue_eviction)
+ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG(QUEUE_RESTORE, queue_restore)
+ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG(UNMAP_FROM_GPU, unmap_from_gpu)
+ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG(DROPPED_EVENT, dropped_event)
+
+#undef ROCP_SDK_SPECIALIZE_PAGE_MIGRATION_ARG
+
+template <typename ArchiveT, size_t Idx, size_t... IdxTail>
+void
+save_page_migration_args(ArchiveT&                              ar,
+                         rocprofiler_page_migration_operation_t op,
+                         rocprofiler_page_migration_args_t      args,
+                         std::index_sequence<Idx, IdxTail...>)
+{
+    using save_page_migration_type = save_page_migration_arg<Idx>;
+    if(op == save_page_migration_type::value)
+    {
+        if constexpr(save_page_migration_type::value != ROCPROFILER_PAGE_MIGRATION_NONE)
+            save_page_migration_type{}(ar, args);
+    }
+    else if constexpr(sizeof...(IdxTail) > 0)
+    {
+        save_page_migration_args(ar, op, args, std::index_sequence<IdxTail...>{});
+    }
+}
+}  // namespace details
+
+template <typename ArchiveT>
+void
 save(ArchiveT& ar, const rocprofiler_buffer_tracing_page_migration_record_t& data)
 {
     ROCP_SDK_SAVE_DATA_FIELD(size);
     ROCP_SDK_SAVE_DATA_FIELD(kind);
     ROCP_SDK_SAVE_DATA_FIELD(operation);
-    ROCP_SDK_SAVE_DATA_FIELD(start_timestamp);
-    ROCP_SDK_SAVE_DATA_FIELD(end_timestamp);
+    ROCP_SDK_SAVE_DATA_FIELD(timestamp);
     ROCP_SDK_SAVE_DATA_FIELD(pid);
-
-    switch(data.operation)
-    {
-        case ROCPROFILER_PAGE_MIGRATION_PAGE_FAULT:
-        {
-            ar(make_nvp("page_fault", data.page_fault));
-            break;
-        }
-        case ROCPROFILER_PAGE_MIGRATION_PAGE_MIGRATE:
-        {
-            ar(make_nvp("page_migrate", data.page_migrate));
-            break;
-        }
-        case ROCPROFILER_PAGE_MIGRATION_QUEUE_SUSPEND:
-        {
-            ar(make_nvp("queue_suspend", data.queue_suspend));
-            break;
-        }
-        case ROCPROFILER_PAGE_MIGRATION_UNMAP_FROM_GPU:
-        {
-            ar(make_nvp("unmap_from_gpu", data.unmap_from_gpu));
-            break;
-        }
-        case ROCPROFILER_PAGE_MIGRATION_NONE:
-        case ROCPROFILER_PAGE_MIGRATION_LAST:
-        {
-            throw std::runtime_error{"unsupported page migration operation type"};
-            break;
-        }
-    }
-}
-
-template <typename ArchiveT>
-void
-save(ArchiveT& ar, const rocprofiler_buffer_tracing_page_migration_page_fault_record_t& data)
-{
-    ROCP_SDK_SAVE_DATA_FIELD(node_id);
-    ROCP_SDK_SAVE_DATA_FIELD(address);
-    ROCP_SDK_SAVE_DATA_FIELD(read_fault);
-    ROCP_SDK_SAVE_DATA_FIELD(migrated);
-}
-
-template <typename ArchiveT>
-void
-save(ArchiveT& ar, const rocprofiler_buffer_tracing_page_migration_page_migrate_record_t& data)
-{
-    ROCP_SDK_SAVE_DATA_FIELD(start_addr);
-    ROCP_SDK_SAVE_DATA_FIELD(end_addr);
-    ROCP_SDK_SAVE_DATA_FIELD(from_node);
-    ROCP_SDK_SAVE_DATA_FIELD(to_node);
-    ROCP_SDK_SAVE_DATA_FIELD(prefetch_node);
-    ROCP_SDK_SAVE_DATA_FIELD(preferred_node);
-    ROCP_SDK_SAVE_DATA_FIELD(trigger);
-}
-
-template <typename ArchiveT>
-void
-save(ArchiveT& ar, const rocprofiler_buffer_tracing_page_migration_queue_suspend_record_t& data)
-{
-    ROCP_SDK_SAVE_DATA_FIELD(node_id);
-    ROCP_SDK_SAVE_DATA_FIELD(trigger);
-    ROCP_SDK_SAVE_DATA_FIELD(rescheduled);
-}
-
-template <typename ArchiveT>
-void
-save(ArchiveT& ar, const rocprofiler_buffer_tracing_page_migration_unmap_from_gpu_record_t& data)
-{
-    ROCP_SDK_SAVE_DATA_FIELD(node_id);
-    ROCP_SDK_SAVE_DATA_FIELD(start_addr);
-    ROCP_SDK_SAVE_DATA_FIELD(end_addr);
-    ROCP_SDK_SAVE_DATA_FIELD(trigger);
+    details::save_page_migration_args(
+        ar, data.operation, data.args, std::make_index_sequence<ROCPROFILER_PAGE_MIGRATION_LAST>{});
 }
 
 template <typename ArchiveT>
@@ -618,7 +789,6 @@ save(ArchiveT& ar, HSA_CAPABILITY data)
     ROCP_SDK_SAVE_DATA_BITFIELD("SVMAPISupported", ui32.SVMAPISupported);
     ROCP_SDK_SAVE_DATA_BITFIELD("CoherentHostAccess", ui32.CoherentHostAccess);
     ROCP_SDK_SAVE_DATA_BITFIELD("DebugSupportedFirmware", ui32.DebugSupportedFirmware);
-    ROCP_SDK_SAVE_DATA_BITFIELD("Reserved", ui32.Reserved);
 }
 
 template <typename ArchiveT>
@@ -659,6 +829,44 @@ save(ArchiveT& ar, rocprofiler_agent_cache_t data)
     ROCP_SDK_SAVE_DATA_FIELD(association);
     ROCP_SDK_SAVE_DATA_FIELD(latency);
     ROCP_SDK_SAVE_DATA_FIELD(type);
+}
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, rocprofiler_pc_t data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(code_object_id);
+    ROCP_SDK_SAVE_DATA_FIELD(code_object_offset);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, rocprofiler_pc_sampling_hw_id_v0_t data)
+{
+    ROCP_SDK_SAVE_DATA_BITFIELD("chiplet", chiplet);
+    ROCP_SDK_SAVE_DATA_BITFIELD("wave_id", wave_id);
+    ROCP_SDK_SAVE_DATA_BITFIELD("simd_id", simd_id);
+    ROCP_SDK_SAVE_DATA_BITFIELD("pipe_id", pipe_id);
+    ROCP_SDK_SAVE_DATA_BITFIELD("cu_or_wgp_id", cu_or_wgp_id);
+    ROCP_SDK_SAVE_DATA_BITFIELD("shader_array_id", shader_array_id);
+    ROCP_SDK_SAVE_DATA_BITFIELD("shader_engine_id", shader_engine_id);
+    ROCP_SDK_SAVE_DATA_BITFIELD("workgroup_id ", workgroup_id);
+    ROCP_SDK_SAVE_DATA_BITFIELD("vm_id", vm_id);
+    ROCP_SDK_SAVE_DATA_BITFIELD("queue_id", queue_id);
+    ROCP_SDK_SAVE_DATA_BITFIELD("microengine_id", microengine_id);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, rocprofiler_pc_sampling_record_host_trap_v0_t data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(hw_id);
+    ROCP_SDK_SAVE_DATA_FIELD(pc);
+    ROCP_SDK_SAVE_DATA_FIELD(exec_mask);
+    ROCP_SDK_SAVE_DATA_FIELD(timestamp);
+    ROCP_SDK_SAVE_DATA_FIELD(dispatch_id);
+    ROCP_SDK_SAVE_DATA_VALUE("corr_id", correlation_id);
+    ROCP_SDK_SAVE_DATA_VALUE("wrkgrp_id", workgroup_id);
+    ROCP_SDK_SAVE_DATA_BITFIELD("wave_in_grp", wave_in_group);
 }
 
 template <typename ArchiveT>
@@ -794,6 +1002,29 @@ save(ArchiveT& ar, rocprofiler_record_dimension_info_t data)
     ROCP_SDK_SAVE_DATA_FIELD(id);
     ROCP_SDK_SAVE_DATA_FIELD(instance_size);
     ROCP_SDK_SAVE_DATA_CSTR(name);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, rocprofiler_callback_tracing_runtime_initialization_data_t data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(size);
+    ROCP_SDK_SAVE_DATA_FIELD(version);
+    ROCP_SDK_SAVE_DATA_FIELD(instance);
+}
+
+template <typename ArchiveT>
+void
+save(ArchiveT& ar, rocprofiler_buffer_tracing_runtime_initialization_record_t data)
+{
+    ROCP_SDK_SAVE_DATA_FIELD(size);
+    ROCP_SDK_SAVE_DATA_FIELD(kind);
+    ROCP_SDK_SAVE_DATA_FIELD(operation);
+    ROCP_SDK_SAVE_DATA_FIELD(correlation_id);
+    ROCP_SDK_SAVE_DATA_FIELD(timestamp);
+    ROCP_SDK_SAVE_DATA_FIELD(thread_id);
+    ROCP_SDK_SAVE_DATA_FIELD(version);
+    ROCP_SDK_SAVE_DATA_FIELD(instance);
 }
 
 template <typename ArchiveT, typename EnumT, typename ValueT>

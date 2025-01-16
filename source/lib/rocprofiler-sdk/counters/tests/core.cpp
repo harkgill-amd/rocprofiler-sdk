@@ -33,7 +33,8 @@
 #include "lib/rocprofiler-sdk/kernel_dispatch/profiling_time.hpp"
 #include "lib/rocprofiler-sdk/registration.hpp"
 
-#include <rocprofiler-sdk/dispatch_profile.h>
+#include <rocprofiler-sdk/dispatch_counting_service.h>
+#include <rocprofiler-sdk/experimental/counters.h>
 #include <rocprofiler-sdk/fwd.h>
 #include <rocprofiler-sdk/registration.h>
 #include <rocprofiler-sdk/rocprofiler.h>
@@ -113,7 +114,7 @@ namespace
 rocprofiler_context_id_t&
 get_client_ctx()
 {
-    static rocprofiler_context_id_t ctx;
+    static rocprofiler_context_id_t ctx{0};
     return ctx;
 }
 
@@ -165,7 +166,7 @@ buffered_callback(rocprofiler_context_id_t,
 }
 
 void
-null_dispatch_callback(rocprofiler_profile_counting_dispatch_data_t,
+null_dispatch_callback(rocprofiler_dispatch_counting_service_data_t,
                        rocprofiler_profile_config_id_t*,
                        rocprofiler_user_data_t*,
                        void*)
@@ -181,7 +182,7 @@ null_buffered_callback(rocprofiler_context_id_t,
 {}
 
 void
-null_record_callback(rocprofiler_profile_counting_dispatch_data_t,
+null_record_callback(rocprofiler_dispatch_counting_service_data_t,
                      rocprofiler_record_counter_t*,
                      size_t,
                      rocprofiler_user_data_t,
@@ -207,7 +208,7 @@ TEST(core, check_packet_generation)
             /**
              * Check profile construction
              */
-            rocprofiler_profile_config_id_t cfg_id = {};
+            rocprofiler_profile_config_id_t cfg_id = {.handle = 0};
             rocprofiler_counter_id_t        id     = {.handle = metric.id()};
             ROCP_ERROR << fmt::format("Generating packet for {}", metric);
             ROCPROFILER_CALL(
@@ -301,7 +302,7 @@ namespace
 struct expected_dispatch
 {
     // To pass back
-    rocprofiler_profile_config_id_t  id             = {};
+    rocprofiler_profile_config_id_t  id             = {.handle = 0};
     rocprofiler_queue_id_t           queue_id       = {.handle = 0};
     rocprofiler_agent_id_t           agent_id       = {.handle = 0};
     uint64_t                         kernel_id      = 0;
@@ -313,7 +314,7 @@ struct expected_dispatch
 };
 
 void
-user_dispatch_cb(rocprofiler_profile_counting_dispatch_data_t dispatch_data,
+user_dispatch_cb(rocprofiler_dispatch_counting_service_data_t dispatch_data,
                  rocprofiler_profile_config_id_t*             config,
                  rocprofiler_user_data_t*                     user_data,
                  void*                                        callback_data_args)
@@ -326,7 +327,7 @@ user_dispatch_cb(rocprofiler_profile_counting_dispatch_data_t dispatch_data,
     auto kernel_id      = dispatch_data.dispatch_info.kernel_id;
     auto dispatch_id    = dispatch_data.dispatch_info.dispatch_id;
 
-    EXPECT_EQ(sizeof(rocprofiler_profile_counting_dispatch_data_t), dispatch_data.size);
+    EXPECT_EQ(sizeof(rocprofiler_dispatch_counting_service_data_t), dispatch_data.size);
     EXPECT_EQ(expected.kernel_id, kernel_id);
     EXPECT_EQ(expected.dispatch_id, dispatch_id);
     EXPECT_EQ(expected.agent_id, agent_id);
@@ -458,14 +459,16 @@ TEST(core, check_callbacks)
                                                        &opt_buff_id),
                              "Could not create buffer");
             cb_info->buffer = opt_buff_id;
-            // hsa::Queue::queue_info_session_t sess = {.queue = fq, .correlation_id = &corr_id};
-            hsa::Queue::queue_info_session_t sess = hsa::Queue::queue_info_session_t{.queue = fq};
-            sess.correlation_id                   = &corr_id;
+
+            auto _sess           = hsa::Queue::queue_info_session_t{.queue = fq};
+            _sess.correlation_id = &corr_id;
+
+            auto sess = std::make_shared<hsa::Queue::queue_info_session_t>(std::move(_sess));
 
             counters::inst_pkt_t pkts;
             pkts.emplace_back(
                 std::make_pair(std::move(ret_pkt), static_cast<counters::ClientID>(0)));
-            completed_cb(&ctx, cb_info, fq, pkt, sess, pkts, kernel_dispatch::profiling_time{});
+            completed_cb(&ctx, cb_info, sess, pkts, kernel_dispatch::profiling_time{});
             rocprofiler_flush_buffer(opt_buff_id);
             rocprofiler_destroy_buffer(opt_buff_id);
         }
@@ -533,7 +536,7 @@ TEST(core, start_stop_buffered_ctx)
                                                &opt_buff_id),
                      "Could not create buffer");
 
-    ROCPROFILER_CALL(rocprofiler_configure_buffered_dispatch_profile_counting_service(
+    ROCPROFILER_CALL(rocprofiler_configure_buffered_dispatch_counting_service(
                          get_client_ctx(), opt_buff_id, null_dispatch_callback, (void*) 0x12345),
                      "Could not setup buffered service");
     ROCPROFILER_CALL(rocprofiler_start_context(get_client_ctx()), "start context");
@@ -595,11 +598,11 @@ TEST(core, start_stop_callback_ctx)
     ROCPROFILER_CALL(rocprofiler_create_context(&get_client_ctx()), "context creation failed");
 
     ROCPROFILER_CALL(
-        rocprofiler_configure_callback_dispatch_profile_counting_service(get_client_ctx(),
-                                                                         null_dispatch_callback,
-                                                                         (void*) 0x12345,
-                                                                         null_record_callback,
-                                                                         (void*) 0x54321),
+        rocprofiler_configure_callback_dispatch_counting_service(get_client_ctx(),
+                                                                 null_dispatch_callback,
+                                                                 (void*) 0x12345,
+                                                                 null_record_callback,
+                                                                 (void*) 0x54321),
         "Could not setup counting service");
     ROCPROFILER_CALL(rocprofiler_start_context(get_client_ctx()), "start context");
 
@@ -744,5 +747,67 @@ TEST(core, public_api_iterate_agents)
             from_api.erase(x.id());
         }
         EXPECT_TRUE(from_api.empty());
+    }
+}
+
+TEST(core, check_load_counter_def_append)
+{
+    const std::string test_yaml = R"(
+TEST_YAML_LOAD:
+  architectures:
+    gfx942/gfx10/gfx1010/gfx1030/gfx1031/gfx11/gfx1032/gfx1102/gfx906/gfx1100/gfx1101/gfx908/gfx90a/gfx9:
+      expression: reduce(GRBM_GUI_ACTIVE,max)*CU_NUM
+  description: 'Unit: cycles'
+    )";
+    ASSERT_EQ(hsa_init(), HSA_STATUS_SUCCESS);
+    test_init();
+
+    registration::init_logging();
+    registration::set_init_status(-1);
+    context::push_client(1);
+
+    ROCPROFILER_CALL(
+        rocprofiler_load_counter_definition(
+            test_yaml.c_str(), test_yaml.size(), ROCPROFILER_COUNTER_FLAG_APPEND_DEFINITION),
+        "Could not load counter definition");
+    auto agents = hsa::get_queue_controller()->get_supported_agents();
+    for(const auto& [_, agent] : agents)
+    {
+        EXPECT_EQ(findDeviceMetrics(agent, {"TEST_YAML_LOAD"}).size(), 1);
+    }
+}
+
+TEST(core, check_load_counter_def)
+{
+    const std::string test_yaml = R"(
+GRBM_GUI_ACTIVE:
+  architectures:
+    gfx942/gfx941/gfx10/gfx1010/gfx1030/gfx1031/gfx11/gfx1032/gfx1102/gfx906/gfx1100/gfx1101/gfx940/gfx908/gfx900/gfx90a/gfx9:
+      block: GRBM
+      event: 2
+  description: The GUI is Active
+TEST_YAML_LOAD:
+  architectures:
+    gfx942/gfx10/gfx1010/gfx1030/gfx1031/gfx11/gfx1032/gfx1102/gfx906/gfx1100/gfx1101/gfx908/gfx90a/gfx9:
+      expression: reduce(GRBM_GUI_ACTIVE,max)
+  description: cycles
+    )";
+    ASSERT_EQ(hsa_init(), HSA_STATUS_SUCCESS);
+    test_init();
+
+    registration::init_logging();
+    registration::set_init_status(-1);
+    context::push_client(1);
+
+    ROCPROFILER_CALL(rocprofiler_load_counter_definition(
+                         test_yaml.c_str(), test_yaml.size(), ROCPROFILER_COUNTER_FLAG_NONE),
+                     "Could not load counter definition");
+    auto agents = hsa::get_queue_controller()->get_supported_agents();
+    for(const auto& [_, agent] : agents)
+    {
+        // MAX_WAVE_SIZE should not be present
+        EXPECT_EQ(
+            findDeviceMetrics(agent, {"TEST_YAML_LOAD", "GRBM_GUI_ACTIVE", "MAX_WAVE_SIZE"}).size(),
+            2);
     }
 }

@@ -61,8 +61,9 @@ constexpr uint64_t MAX_BUFFER_SIZE = std::numeric_limits<int32_t>::max();  // aq
 
 struct cbdata_t
 {
+    rocprofiler_agent_id_t                 agent;
     rocprofiler_att_shader_data_callback_t cb_fn;
-    const rocprofiler_user_data_t*         dispatch_userdata;
+    const rocprofiler_user_data_t*         userdata;
 };
 
 common::Synchronized<std::optional<int64_t>> client;
@@ -238,7 +239,7 @@ thread_trace_callback(uint32_t shader, void* buffer, uint64_t size, void* callba
 {
     auto& cb_data = *static_cast<cbdata_t*>(callback_data);
 
-    cb_data.cb_fn(shader, buffer, size, *cb_data.dispatch_userdata);
+    cb_data.cb_fn(cb_data.agent, shader, buffer, size, *cb_data.userdata);
     return HSA_STATUS_SUCCESS;
 }
 
@@ -247,8 +248,9 @@ ThreadTracerQueue::iterate_data(aqlprofile_handle_t handle, rocprofiler_user_dat
 {
     cbdata_t cb_dt{};
 
-    cb_dt.cb_fn             = params.shader_cb_fn;
-    cb_dt.dispatch_userdata = &data;
+    cb_dt.agent    = agent_id;
+    cb_dt.cb_fn    = params.shader_cb_fn;
+    cb_dt.userdata = &data;
 
     auto status = aqlprofile_att_iterate_data(handle, thread_trace_callback, &cb_dt);
     CHECK_HSA(status, "Failed to iterate ATT data");
@@ -334,24 +336,26 @@ DispatchThreadTracer::pre_kernel_call(const hsa::Queue&              queue,
     // and maybe adds barrier packets if the state is transitioning from serialized <->
     // unserialized
     auto maybe_add_serialization = [&](auto& gen_pkt) {
-        CHECK_NOTNULL(hsa::get_queue_controller())->serializer().rlock([&](const auto& serializer) {
-            for(auto& s_pkt : serializer.kernel_dispatch(queue))
-                gen_pkt->before_krn_pkt.push_back(s_pkt.ext_amd_aql_pm4);
-        });
+        CHECK_NOTNULL(hsa::get_queue_controller())
+            ->serializer(&queue)
+            .rlock([&](const auto& serializer) {
+                for(auto& s_pkt : serializer.kernel_dispatch(queue))
+                    gen_pkt->before_krn_pkt.push_back(s_pkt.ext_amd_aql_pm4);
+            });
     };
 
-    auto control_flags = params.dispatch_cb_fn(queue.get_id(),
-                                               queue.get_agent().get_rocp_agent(),
+    auto control_flags = params.dispatch_cb_fn(queue.get_agent().get_rocp_agent()->id,
+                                               queue.get_id(),
                                                rocprof_corr_id,
                                                kernel_id,
                                                dispatch_id,
-                                               user_data,
-                                               params.callback_userdata);
+                                               params.callback_userdata.ptr,
+                                               user_data);
 
     if(control_flags == ROCPROFILER_ATT_CONTROL_NONE)
     {
         auto empty = std::make_unique<hsa::EmptyAQLPacket>();
-        maybe_add_serialization(empty);
+        if(params.bSerialize) maybe_add_serialization(empty);
         return empty;
     }
 
@@ -381,8 +385,9 @@ public:
         auto* controller = hsa::get_queue_controller();
         if(!controller) return;
 
-        controller->serializer().wlock(
-            [&](auto& serializer) { serializer.kernel_completion_signal(session.queue); });
+        controller->serializer(&session.queue).wlock([&](auto& serializer) {
+            serializer.kernel_completion_signal(session.queue);
+        });
     }
     const hsa::Queue::queue_info_session_t& session;
 };
@@ -391,7 +396,8 @@ void
 DispatchThreadTracer::post_kernel_call(DispatchThreadTracer::inst_pkt_t&       aql,
                                        const hsa::Queue::queue_info_session_t& session)
 {
-    SignalSerializerExit signal(session);
+    std::unique_ptr<SignalSerializerExit> signal{nullptr};
+    if(params.bSerialize) signal = std::make_unique<SignalSerializerExit>(session);
 
     if(post_move_data.load() < 1) return;
 
@@ -408,6 +414,8 @@ DispatchThreadTracer::post_kernel_call(DispatchThreadTracer::inst_pkt_t&       a
         auto it = agents.find(pkt->GetAgent());
         if(it != agents.end() && it->second != nullptr)
             it->second->iterate_data(pkt->GetHandle(), session.user_data);
+
+        if(!signal) std::make_unique<SignalSerializerExit>(session);
     }
 }
 
@@ -415,28 +423,33 @@ void
 DispatchThreadTracer::start_context()
 {
     using corr_id_map_t = hsa::Queue::queue_info_session_t::external_corr_id_map_t;
+
     CHECK_NOTNULL(hsa::get_queue_controller())->enable_serialization();
 
     // Only one thread should be attempting to enable/disable this context
     client.wlock([&](auto& client_id) {
         if(client_id) return;
 
-        client_id = hsa::get_queue_controller()->add_callback(
-            std::nullopt,
-            [=](const hsa::Queue& q,
-                const hsa::rocprofiler_packet& /* kern_pkt */,
-                rocprofiler_kernel_id_t   kernel_id,
-                rocprofiler_dispatch_id_t dispatch_id,
-                rocprofiler_user_data_t*  user_data,
-                const corr_id_map_t& /* extern_corr_ids */,
-                const context::correlation_id* corr_id) {
-                return this->pre_kernel_call(q, kernel_id, dispatch_id, user_data, corr_id);
-            },
-            [=](const hsa::Queue& /* q */,
-                hsa::rocprofiler_packet /* kern_pkt */,
-                const hsa::Queue::queue_info_session_t& session,
-                inst_pkt_t&                             aql,
-                kernel_dispatch::profiling_time) { this->post_kernel_call(aql, session); });
+        client_id =
+            CHECK_NOTNULL(hsa::get_queue_controller())
+                ->add_callback(
+                    std::nullopt,
+                    [=](const hsa::Queue& q,
+                        const hsa::rocprofiler_packet& /* kern_pkt */,
+                        rocprofiler_kernel_id_t   kernel_id,
+                        rocprofiler_dispatch_id_t dispatch_id,
+                        rocprofiler_user_data_t*  user_data,
+                        const corr_id_map_t& /* extern_corr_ids */,
+                        const context::correlation_id* corr_id) {
+                        return this->pre_kernel_call(q, kernel_id, dispatch_id, user_data, corr_id);
+                    },
+                    [=](const hsa::Queue& /* q */,
+                        hsa::rocprofiler_packet /* kern_pkt */,
+                        std::shared_ptr<hsa::Queue::queue_info_session_t>& session,
+                        inst_pkt_t&                                        aql,
+                        kernel_dispatch::profiling_time) {
+                        this->post_kernel_call(aql, *session);
+                    });
     });
 }
 
@@ -447,12 +460,11 @@ DispatchThreadTracer::stop_context()  // NOLINT(readability-convert-member-funct
         if(!client_id) return;
 
         // Remove our callbacks from HSA's queue controller
-        hsa::get_queue_controller()->remove_callback(*client_id);
+        CHECK_NOTNULL(hsa::get_queue_controller())->remove_callback(*client_id);
         client_id = std::nullopt;
     });
 
-    auto* controller = hsa::get_queue_controller();
-    if(controller) controller->disable_serialization();
+    CHECK_NOTNULL(hsa::get_queue_controller())->disable_serialization();
 }
 
 void
@@ -511,6 +523,7 @@ AgentThreadTracer::start_context()
 void
 AgentThreadTracer::stop_context()
 {
+    using wait_t = std::tuple<ThreadTracerQueue*, aqlprofile_handle_t, std::unique_ptr<Signal>>;
     std::unique_lock<std::mutex> lk(agent_mut);
 
     if(tracers.empty())
@@ -519,10 +532,9 @@ AgentThreadTracer::stop_context()
         return;
     }
 
-    std::vector<std::tuple<ThreadTracerQueue*, aqlprofile_handle_t, std::unique_ptr<Signal>>>
-        wait_list{};
+    std::vector<wait_t> wait_list{};
 
-    for(auto& [id, tracer] : tracers)
+    for(auto& [_, tracer] : tracers)
     {
         auto packet = tracer->get_control(false);
         packet->populate_after();
@@ -534,8 +546,7 @@ AgentThreadTracer::stop_context()
     for(auto& [tracer, handle, signal] : wait_list)
     {
         signal->WaitOn();
-        rocprofiler_user_data_t userdata{.ptr = tracer->params.callback_userdata};
-        tracer->iterate_data(handle, userdata);
+        tracer->iterate_data(handle, tracer->params.callback_userdata);
     }
 }
 
@@ -562,6 +573,8 @@ finalize()
     {
         if(ctx->agent_thread_trace) ctx->agent_thread_trace->resource_deinit();
     }
+
+    code_object::finalize();
 }
 
 }  // namespace thread_trace

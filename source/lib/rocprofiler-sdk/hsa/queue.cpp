@@ -43,6 +43,7 @@
 #include <hsa/hsa_ext_amd.h>
 
 #include <atomic>
+#include <memory>
 
 // static assert for rocprofiler_packet ABI compatibility
 static_assert(sizeof(hsa_ext_amd_aql_pm4_packet_t) == sizeof(hsa_kernel_dispatch_packet_t),
@@ -67,6 +68,14 @@ namespace hsa
 {
 namespace
 {
+std::atomic<int64_t>&
+get_balanced_signal_slots()
+{
+    constexpr int64_t NUM_SIGNALS = 16;
+    static auto*&     atomic = common::static_object<std::atomic<int64_t>>::construct(NUM_SIGNALS);
+    return *atomic;
+}
+
 template <typename DomainT, typename... Args>
 inline bool
 context_filter(const context::context* ctx, DomainT domain, Args... args)
@@ -106,8 +115,12 @@ AsyncSignalHandler(hsa_signal_value_t /*signal_v*/, void* data)
         return false;
     }
 
-    auto& queue_info_session = *static_cast<Queue::queue_info_session_t*>(data);
-    auto  dispatch_time      = kernel_dispatch::get_dispatch_time(queue_info_session);
+    get_balanced_signal_slots().fetch_add(1);
+
+    auto& shared_ptr_info    = *static_cast<std::shared_ptr<Queue::queue_info_session_t>*>(data);
+    auto& queue_info_session = *shared_ptr_info;
+
+    auto dispatch_time = kernel_dispatch::get_dispatch_time(queue_info_session);
 
     kernel_dispatch::dispatch_complete(queue_info_session, dispatch_time);
 
@@ -118,7 +131,7 @@ AsyncSignalHandler(hsa_signal_value_t /*signal_v*/, void* data)
         {
             cb_pair.second(queue_info_session.queue,
                            queue_info_session.kernel_pkt,
-                           queue_info_session,
+                           shared_ptr_info,
                            queue_info_session.inst_pkt,
                            dispatch_time);
         }
@@ -154,7 +167,7 @@ AsyncSignalHandler(hsa_signal_value_t /*signal_v*/, void* data)
     }
 
     queue_info_session.queue.async_complete();
-    delete static_cast<Queue::queue_info_session_t*>(data);
+    delete &shared_ptr_info;
 
     return false;
 }
@@ -342,6 +355,13 @@ WriteInterceptor(const void* packets,
             thr_id,
             ROCPROFILER_EXTERNAL_CORRELATION_REQUEST_KERNEL_DISPATCH);
 
+        // If there is a lot of contention for HSA signals, then schedule out the thread
+        if(get_balanced_signal_slots().fetch_sub(1) <= 0)
+        {
+            sched_yield();
+            std::this_thread::sleep_for(std::chrono::nanoseconds(100));
+        }
+
         // Stores the instrumentation pkt (i.e. AQL packets for counter collection)
         // along with an ID of the client we got the packet from (this will be returned via
         // completed_cb_t)
@@ -378,7 +398,7 @@ WriteInterceptor(const void* packets,
         if(pc_sampling::is_pc_sample_service_configured(queue.get_agent().get_rocp_agent()->id))
         {
             transformed_packets.emplace_back(pc_sampling::hsa::generate_marker_packet_for_kernel(
-                corr_id, tracing_data_v.external_correlation_ids));
+                corr_id, tracing_data_v.external_correlation_ids, dispatch_id));
         }
 #endif
 
@@ -429,20 +449,24 @@ WriteInterceptor(const void* packets,
 
         // Enqueue the signal into the handler. Will call completed_cb when
         // signal completes.
-        queue.signal_async_handler(
-            completion_signal,
-            new Queue::queue_info_session_t{.queue            = queue,
-                                            .inst_pkt         = std::move(inst_pkt),
-                                            .interrupt_signal = interrupt_signal,
-                                            .tid              = thr_id,
-                                            .enqueue_ts       = common::timestamp_ns(),
-                                            .user_data        = user_data,
-                                            .correlation_id   = corr_id,
-                                            .kernel_pkt       = kernel_pkt,
-                                            .callback_record  = callback_record,
-                                            .tracing_data     = tracing_data_v});
 
         {
+            Queue::queue_info_session_t info_session{.queue            = queue,
+                                                     .inst_pkt         = std::move(inst_pkt),
+                                                     .interrupt_signal = interrupt_signal,
+                                                     .tid              = thr_id,
+                                                     .enqueue_ts       = common::timestamp_ns(),
+                                                     .user_data        = user_data,
+                                                     .correlation_id   = corr_id,
+                                                     .kernel_pkt       = kernel_pkt,
+                                                     .callback_record  = callback_record,
+                                                     .tracing_data     = tracing_data_v};
+
+            auto shared = std::make_shared<Queue::queue_info_session_t>(std::move(info_session));
+
+            queue.signal_async_handler(completion_signal,
+                                       new std::shared_ptr<Queue::queue_info_session_t>(shared));
+
             auto tracer_data = callback_record;
             tracing::execute_phase_exit_callbacks(tracing_data_v.callback_contexts,
                                                   tracing_data_v.external_correlation_ids,
@@ -496,27 +520,33 @@ Queue::Queue(const AgentCache&  agent,
                         _ext_api.hsa_amd_profiling_set_profiler_enabled_fn(_intercept_queue, true))
         << "Could not setup intercept profiler";
 
-    CHECK(_agent.cpu_pool().handle != 0);
-    CHECK(_agent.get_hsa_agent().handle != 0);
-    // Set state of the queue to allow profiling
-    aql::set_profiler_active_on_queue(
-        _agent.cpu_pool(), _agent.get_hsa_agent(), [&](hsa::rocprofiler_packet pkt) {
-            hsa_signal_t completion;
-            create_signal(0, &completion);
-            pkt.ext_amd_aql_pm4.completion_signal = completion;
-            counters::submitPacket(_intercept_queue, &pkt);
-            constexpr auto timeout_hint =
-                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds{1});
-            if(core_api.hsa_signal_wait_relaxed_fn(completion,
-                                                   HSA_SIGNAL_CONDITION_EQ,
-                                                   0,
-                                                   timeout_hint.count(),
-                                                   HSA_WAIT_STATE_ACTIVE) != 0)
-            {
-                ROCP_FATAL << "Could not set agent to be profiled";
-            }
-            core_api.hsa_signal_destroy_fn(completion);
-        });
+    if(!context::get_registered_contexts([](const context::context* ctx) {
+            return (ctx->counter_collection || ctx->device_counter_collection);
+        }).empty())
+    {
+        CHECK(_agent.cpu_pool().handle != 0);
+        CHECK(_agent.get_hsa_agent().handle != 0);
+
+        // Set state of the queue to allow profiling
+        aql::set_profiler_active_on_queue(
+            _agent.cpu_pool(), _agent.get_hsa_agent(), [&](hsa::rocprofiler_packet pkt) {
+                hsa_signal_t completion;
+                create_signal(0, &completion);
+                pkt.ext_amd_aql_pm4.completion_signal = completion;
+                counters::submitPacket(_intercept_queue, &pkt);
+                constexpr auto timeout_hint =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds{1});
+                if(core_api.hsa_signal_wait_relaxed_fn(completion,
+                                                       HSA_SIGNAL_CONDITION_EQ,
+                                                       0,
+                                                       timeout_hint.count(),
+                                                       HSA_WAIT_STATE_ACTIVE) != 0)
+                {
+                    ROCP_FATAL << "Could not set agent to be profiled";
+                }
+                core_api.hsa_signal_destroy_fn(completion);
+            });
+    }
 
     ROCP_HSA_TABLE_CALL(
         FATAL,
@@ -538,7 +568,7 @@ Queue::~Queue()
 }
 
 void
-Queue::signal_async_handler(const hsa_signal_t& signal, Queue::queue_info_session_t* data) const
+Queue::signal_async_handler(const hsa_signal_t& signal, void* data) const
 {
 #if !defined(NDEBUG)
     CHECK_NOTNULL(hsa::get_queue_controller())->_debug_signals.wlock([&](auto& signals) {

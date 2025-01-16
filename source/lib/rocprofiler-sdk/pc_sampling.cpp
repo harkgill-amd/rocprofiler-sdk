@@ -50,7 +50,10 @@ is_pc_sampling_explicitly_enabled()
     auto pc_sampling_enabled =
         rocprofiler::common::get_env("ROCPROFILER_PC_SAMPLING_BETA_ENABLED", false);
 
-    if(!pc_sampling_enabled) LOG(ERROR) << "PC sampling unavailable\n";
+    if(!pc_sampling_enabled)
+        ROCP_INFO << "PC sampling unavailable. The feature is implicitly disabled. "
+                  << "To use it on a supported architecture, "
+                  << "set ROCPROFILER_PC_SAMPLING_BETA_ENABLED=ON in the environment";
 
     return pc_sampling_enabled;
 }
@@ -63,7 +66,8 @@ rocprofiler_configure_pc_sampling_service(rocprofiler_context_id_t         conte
                                           rocprofiler_pc_sampling_method_t method,
                                           rocprofiler_pc_sampling_unit_t   unit,
                                           uint64_t                         interval,
-                                          rocprofiler_buffer_id_t          buffer_id)
+                                          rocprofiler_buffer_id_t          buffer_id,
+                                          int /*flags*/)
 {
     if(!is_pc_sampling_explicitly_enabled()) return ROCPROFILER_STATUS_ERROR_NOT_IMPLEMENTED;
 
@@ -92,7 +96,7 @@ rocprofiler_configure_pc_sampling_service(rocprofiler_context_id_t         conte
     (void) interval;
     (void) buffer_id;
 
-    ROCP_ERROR << "PC sampling unavailable\n";
+    ROCP_INFO << "PC sampling unavailable. The feature depends on the latest HSA runtime.";
 
     // ROCr runtime is missing PC sampling.
     return ROCPROFILER_STATUS_ERROR_NOT_AVAILABLE;
@@ -120,7 +124,7 @@ rocprofiler_query_pc_sampling_agent_configurations(
     (void) cb;
     (void) user_data;
 
-    ROCP_ERROR << "PC sampling unavailable\n";
+    ROCP_INFO << "PC sampling unavailable. The feature depends on the latest HSA runtime.";
 
     // ROCr runtime is missing PC sampling.
     return ROCPROFILER_STATUS_ERROR_NOT_AVAILABLE;

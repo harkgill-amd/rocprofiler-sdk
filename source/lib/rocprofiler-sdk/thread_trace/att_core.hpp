@@ -58,7 +58,7 @@ struct thread_trace_parameter_pack
     rocprofiler_context_id_t               context_id{0};
     rocprofiler_att_dispatch_callback_t    dispatch_cb_fn{nullptr};
     rocprofiler_att_shader_data_callback_t shader_cb_fn{nullptr};
-    void*                                  callback_userdata{nullptr};
+    rocprofiler_user_data_t                callback_userdata{};
 
     // Parameters
     uint8_t  target_cu          = 1;
@@ -66,6 +66,8 @@ struct thread_trace_parameter_pack
     uint8_t  perfcounter_ctrl   = 0;
     uint64_t shader_engine_mask = DEFAULT_SE_MASK;
     uint64_t buffer_size        = DEFAULT_BUFFER_SIZE;
+
+    bool bSerialize = false;
 
     // GFX9 Only
     std::vector<std::pair<uint32_t, uint32_t>> perfcounters;
@@ -155,12 +157,12 @@ public:
 
     void post_kernel_call(inst_pkt_t& aql, const hsa::queue_info_session& session);
 
-    std::unordered_map<hsa_agent_t, std::unique_ptr<ThreadTracerQueue>> agents;
+    std::unordered_map<hsa_agent_t, std::unique_ptr<ThreadTracerQueue>> agents{};
 
-    std::shared_mutex agents_map_mut;
+    std::shared_mutex agents_map_mut{};
     std::atomic<int>  post_move_data{0};
 
-    thread_trace_parameter_pack params;
+    thread_trace_parameter_pack params{};
 };
 
 class AgentThreadTracer

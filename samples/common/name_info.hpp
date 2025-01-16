@@ -48,7 +48,7 @@ get_buffer_tracing_names()
 }
 
 inline auto
-get_callback_id_names()
+get_callback_tracing_names()
 {
     return rocprofiler::sdk::get_callback_tracing_names();
 }

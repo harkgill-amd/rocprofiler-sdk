@@ -38,6 +38,9 @@ rocprofiler_add_option(ROCPROFILER_BUILD_TESTS "Enable building the tests"
                        ${ROCPROFILER_BUILD_CI})
 rocprofiler_add_option(ROCPROFILER_BUILD_SAMPLES "Enable building the code samples"
                        ${ROCPROFILER_BUILD_CI})
+rocprofiler_add_option(
+    ROCPROFILER_BUILD_CI_STRICT_TIMESTAMPS
+    "Disable adjusting for clock skew b/t CPU and GPU timestamps" OFF ADVANCED)
 rocprofiler_add_option(ROCPROFILER_BUILD_CODECOV
                        "Enable building for code coverage analysis" OFF)
 rocprofiler_add_option(ROCPROFILER_BUILD_DOCS
@@ -50,6 +53,8 @@ rocprofiler_add_option(
 rocprofiler_add_option(ROCPROFILER_BUILD_FMT "Enable building fmt library internally" ON)
 rocprofiler_add_option(ROCPROFILER_BUILD_GLOG
                        "Enable building glog (Google logging) library internally" ON)
+rocprofiler_add_option(ROCPROFILER_BUILD_OPENMP_TESTS
+                       "Enable building openmp tests and samples" OFF ADVANCED)
 if(ROCPROFILER_BUILD_TESTS)
     rocprofiler_add_option(
         ROCPROFILER_BUILD_GTEST
@@ -134,5 +139,5 @@ include(rocprofiler_memcheck)
 
 # default FAIL_REGULAR_EXPRESSION for tests
 set(ROCPROFILER_DEFAULT_FAIL_REGEX
-    "threw an exception|Permission denied|Could not create logging file"
-    CACHE STRING "Default FAIL_REGULAR_EXPRESSION for tests")
+    "threw an exception|Permission denied|Could not create logging file|failed with error code"
+    CACHE INTERNAL "Default FAIL_REGULAR_EXPRESSION for tests" FORCE)

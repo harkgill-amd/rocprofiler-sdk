@@ -34,22 +34,29 @@
 #include "lib/rocprofiler-sdk/hip/hip.hpp"
 #include "lib/rocprofiler-sdk/hsa/async_copy.hpp"
 #include "lib/rocprofiler-sdk/hsa/hsa.hpp"
+#include "lib/rocprofiler-sdk/hsa/memory_allocation.hpp"
 #include "lib/rocprofiler-sdk/hsa/queue.hpp"
 #include "lib/rocprofiler-sdk/hsa/queue_controller.hpp"
 #include "lib/rocprofiler-sdk/hsa/scratch_memory.hpp"
 #include "lib/rocprofiler-sdk/intercept_table.hpp"
 #include "lib/rocprofiler-sdk/internal_threading.hpp"
 #include "lib/rocprofiler-sdk/marker/marker.hpp"
+#include "lib/rocprofiler-sdk/ompt.hpp"
 #include "lib/rocprofiler-sdk/page_migration/page_migration.hpp"
 #include "lib/rocprofiler-sdk/pc_sampling/code_object.hpp"
 #include "lib/rocprofiler-sdk/pc_sampling/service.hpp"
 #include "lib/rocprofiler-sdk/rccl/rccl.hpp"
+#include "lib/rocprofiler-sdk/runtime_initialization.hpp"
 
 #include <rocprofiler-sdk/context.h>
 #include <rocprofiler-sdk/fwd.h>
 #include <rocprofiler-sdk/hsa.h>
 #include <rocprofiler-sdk/marker.h>
+#include <rocprofiler-sdk/ompt.h>
 #include <rocprofiler-sdk/version.h>
+
+#include <hsa/hsa_api_trace.h>
+#include <hip/amd_detail/hip_api_trace.hpp>
 
 #include <fmt/format.h>
 
@@ -58,9 +65,9 @@
 #include <unistd.h>
 #include <atomic>
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
-#include <hip/amd_detail/hip_api_trace.hpp>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -631,8 +638,10 @@ finalize()
     std::call_once(_once, []() {
         set_fini_status(-1);
         hsa::async_copy_fini();
+        counters::device_counting_service_finalize();
         hsa::queue_controller_fini();
         thread_trace::finalize();
+        ompt::finalize_ompt();
         page_migration::finalize();
 #if ROCPROFILER_SDK_HSA_PC_SAMPLING > 0
         // WARNING: this must precede `code_object::finalize()`
@@ -708,7 +717,7 @@ rocprofiler_set_api_table(const char* name,
     static auto _once = std::once_flag{};
     std::call_once(_once, rocprofiler::registration::initialize);
 
-    // pass to roctx init
+    // pass to ROCTx init
     ROCP_ERROR_IF(num_tables == 0) << "rocprofiler expected " << name
                                    << " library to pass at least one table, not " << num_tables;
     ROCP_ERROR_IF(tables == nullptr) << "rocprofiler expected pointer to array of tables from "
@@ -730,6 +739,11 @@ rocprofiler_set_api_table(const char* name,
         // install rocprofiler API wrappers
         rocprofiler::hip::update_table(hip_runtime_api_table);
 
+        // Tracing notifications the runtime has initialized
+        rocprofiler::runtime_init::initialize(
+            ROCPROFILER_RUNTIME_INITIALIZATION_HIP, lib_version, lib_instance);
+
+        // allow tools to install API wrappers
         rocprofiler::intercept_table::notify_intercept_table_registration(
             ROCPROFILER_HIP_RUNTIME_TABLE,
             lib_version,
@@ -749,9 +763,12 @@ rocprofiler_set_api_table(const char* name,
         // the HIP API tracing invokes the function pointers from the copy below
         rocprofiler::hip::copy_table(hip_compiler_api_table, lib_instance);
 
+        rocprofiler::code_object::initialize(hip_compiler_api_table);
+
         // install rocprofiler API wrappers
         rocprofiler::hip::update_table(hip_compiler_api_table);
 
+        // allow tools to install API wrappers
         rocprofiler::intercept_table::notify_intercept_table_registration(
             ROCPROFILER_HIP_COMPILER_TABLE,
             lib_version,
@@ -771,6 +788,12 @@ rocprofiler_set_api_table(const char* name,
 
         auto* hsa_api_table = static_cast<HsaApiTable*>(*tables);
 
+#if ROCPROFILER_SDK_HSA_PC_SAMPLING > 0
+        auto hsa_api_table_size = hsa_api_table->version.minor_id;
+        auto runtime_pc_sampling_table =
+            (offsetof(::HsaApiTable, pc_sampling_ext_) < hsa_api_table_size);
+#endif
+
         // store a reference of the HsaApiTable implementations for invoking these functions
         // without going through tracing wrappers
         rocprofiler::hsa::copy_table(hsa_api_table->core_, lib_instance);
@@ -779,20 +802,24 @@ rocprofiler_set_api_table(const char* name,
         rocprofiler::hsa::copy_table(hsa_api_table->finalizer_ext_, lib_instance);
         rocprofiler::hsa::copy_table(hsa_api_table->tools_, lib_instance);
 #if ROCPROFILER_SDK_HSA_PC_SAMPLING > 0
-        rocprofiler::hsa::copy_table(hsa_api_table->pc_sampling_ext_, lib_instance);
+        if(runtime_pc_sampling_table)
+            rocprofiler::hsa::copy_table(hsa_api_table->pc_sampling_ext_, lib_instance);
 #endif
 
         // need to construct agent mappings before initializing the queue controller
         rocprofiler::agent::construct_agent_cache(hsa_api_table);
         rocprofiler::hsa::queue_controller_init(hsa_api_table);
         // Process agent ctx's that were started prior to HSA init
-        rocprofiler::counters::agent_profile_hsa_registration();
+        rocprofiler::counters::device_counting_service_hsa_registration();
 
         rocprofiler::hsa::async_copy_init(hsa_api_table, lib_instance);
+        rocprofiler::hsa::memory_allocation_init(hsa_api_table->core_, lib_instance);
+        rocprofiler::hsa::memory_allocation_init(hsa_api_table->amd_ext_, lib_instance);
         rocprofiler::code_object::initialize(hsa_api_table);
         rocprofiler::thread_trace::initialize(hsa_api_table);
 #if ROCPROFILER_SDK_HSA_PC_SAMPLING > 0
-        rocprofiler::pc_sampling::code_object::initialize(hsa_api_table);
+        if(runtime_pc_sampling_table)
+            rocprofiler::pc_sampling::code_object::initialize(hsa_api_table);
 #endif
 
         // install rocprofiler API wrappers
@@ -804,8 +831,13 @@ rocprofiler_set_api_table(const char* name,
 
 #if ROCPROFILER_SDK_HSA_PC_SAMPLING > 0
         // Initialize PC sampling service if configured
-        rocprofiler::pc_sampling::post_hsa_init_start_active_service();
+        if(runtime_pc_sampling_table)
+            rocprofiler::pc_sampling::post_hsa_init_start_active_service();
 #endif
+
+        // Tracing notifications the runtime has initialized
+        rocprofiler::runtime_init::initialize(
+            ROCPROFILER_RUNTIME_INITIALIZATION_HSA, lib_version, lib_instance);
 
         // allow tools to install API wrappers
         rocprofiler::intercept_table::notify_intercept_table_registration(
@@ -813,7 +845,7 @@ rocprofiler_set_api_table(const char* name,
     }
     else if(std::string_view{name} == "roctx")
     {
-        // pass to roctx init
+        // pass to ROCTx init
         ROCP_FATAL_IF(num_tables < 3)
             << "rocprofiler expected ROCTX library to pass 3 API tables, not " << num_tables;
         ROCP_ERROR_IF(num_tables > 3)
@@ -835,6 +867,11 @@ rocprofiler_set_api_table(const char* name,
         rocprofiler::marker::update_table(roctx_ctrl);
         rocprofiler::marker::update_table(roctx_name);
 
+        // Tracing notifications the runtime has initialized
+        rocprofiler::runtime_init::initialize(
+            ROCPROFILER_RUNTIME_INITIALIZATION_MARKER, lib_version, lib_instance);
+
+        // allow tools to install API wrappers
         rocprofiler::intercept_table::notify_intercept_table_registration(
             ROCPROFILER_MARKER_CORE_TABLE, lib_version, lib_instance, std::make_tuple(roctx_core));
 
@@ -863,6 +900,11 @@ rocprofiler_set_api_table(const char* name,
         // install rocprofiler API wrappers
         rocprofiler::rccl::update_table(rccl_api);
 
+        // Tracing notifications the runtime has initialized
+        rocprofiler::runtime_init::initialize(
+            ROCPROFILER_RUNTIME_INITIALIZATION_RCCL, lib_version, lib_instance);
+
+        // allow tools to install API wrappers
         rocprofiler::intercept_table::notify_intercept_table_registration(
             ROCPROFILER_RCCL_TABLE, lib_version, lib_instance, std::make_tuple(rccl_api));
     }

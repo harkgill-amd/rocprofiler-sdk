@@ -10,6 +10,18 @@ install(
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/${PACKAGE_NAME}
     COMPONENT core)
 
+if(ROCPROFILER_BUILD_DOCS)
+    install(
+        FILES ${PROJECT_SOURCE_DIR}/LICENSE
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/${PACKAGE_NAME}-docs
+        COMPONENT docs)
+endif()
+
+install(
+    FILES ${PROJECT_SOURCE_DIR}/LICENSE
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/${PACKAGE_NAME}-tests
+    COMPONENT tests)
+
 install(
     DIRECTORY ${PROJECT_SOURCE_DIR}/samples
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/${PACKAGE_NAME}
@@ -32,11 +44,27 @@ install(
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PACKAGE_NAME}
     COMPONENT development)
 
+install(
+    FILES ${PROJECT_SOURCE_DIR}/cmake/Modules/rocprofiler-sdk-custom-compilation.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PACKAGE_NAME}/Modules
+    COMPONENT development)
+
 rocprofiler_install_env_setup_files(
     NAME ${PACKAGE_NAME}
     VERSION ${PROJECT_VERSION}
     INSTALL_DIR ${CMAKE_INSTALL_DATAROOTDIR}
     COMPONENT development)
+
+function(compute_rocprofiler_sdk_version _VAR)
+    string(REGEX REPLACE "([0-9]+)\\\.([0-9]+)\\\.(.*)" "\\1.\\2" _TMP "${${_VAR}}")
+    set(PACKAGE_${_VAR}
+        "${_TMP}.0...${_TMP}.999999999999"
+        PARENT_SCOPE)
+endfunction()
+
+compute_rocprofiler_sdk_version(amd_comgr_VERSION)
+compute_rocprofiler_sdk_version(hsa-runtime64_VERSION)
+compute_rocprofiler_sdk_version(hip_VERSION)
 
 # ------------------------------------------------------------------------------#
 # install tree
@@ -63,6 +91,11 @@ write_basic_package_version_file(
 configure_file(
     ${PROJECT_SOURCE_DIR}/cmake/rocprofiler_config_nolink_target.cmake
     ${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}-sdk/${PROJECT_NAME}-sdk-config-nolink-target.cmake
+    COPYONLY)
+
+configure_file(
+    ${PROJECT_SOURCE_DIR}/cmake/Modules/rocprofiler-sdk-custom-compilation.cmake
+    ${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}/cmake/${PACKAGE_NAME}/Modules/rocprofiler-sdk-custom-compilation.cmake
     COPYONLY)
 
 install(

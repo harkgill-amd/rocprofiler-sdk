@@ -23,8 +23,8 @@
 #ifndef KFD_IOCTL_H_INCLUDED
 #define KFD_IOCTL_H_INCLUDED
 
-#include <drm.h>
 #include <linux/ioctl.h>
+#include <linux/types.h>
 
 /*
  * - 1.1 - initial version
@@ -578,6 +578,7 @@ enum kfd_smi_event
     KFD_SMI_EVENT_QUEUE_EVICTION   = 9,
     KFD_SMI_EVENT_QUEUE_RESTORE    = 10,
     KFD_SMI_EVENT_UNMAP_FROM_GPU   = 11,
+    KFD_SMI_EVENT_DROPPED_EVENT    = 12,
 
     /*
      * max event number, as a flag bit to get events from all processes,
@@ -590,27 +591,27 @@ enum kfd_smi_event
 
 enum KFD_MIGRATE_TRIGGERS
 {
-    KFD_MIGRATE_TRIGGER_PREFETCH,
-    KFD_MIGRATE_TRIGGER_PAGEFAULT_GPU,
-    KFD_MIGRATE_TRIGGER_PAGEFAULT_CPU,
-    KFD_MIGRATE_TRIGGER_TTM_EVICTION
+    KFD_MIGRATE_TRIGGER_PREFETCH,      /* Prefetch to GPU */
+    KFD_MIGRATE_TRIGGER_PAGEFAULT_GPU, /* GPU page fault recover */
+    KFD_MIGRATE_TRIGGER_PAGEFAULT_CPU, /* CPU page fault recover */
+    KFD_MIGRATE_TRIGGER_TTM_EVICTION   /* TTM eviction */
 };
 
 enum KFD_QUEUE_EVICTION_TRIGGERS
 {
-    KFD_QUEUE_EVICTION_TRIGGER_SVM,
-    KFD_QUEUE_EVICTION_TRIGGER_USERPTR,
-    KFD_QUEUE_EVICTION_TRIGGER_TTM,
-    KFD_QUEUE_EVICTION_TRIGGER_SUSPEND,
-    KFD_QUEUE_EVICTION_CRIU_CHECKPOINT,
-    KFD_QUEUE_EVICTION_CRIU_RESTORE
+    KFD_QUEUE_EVICTION_TRIGGER_SVM,     /* SVM buffer migration */
+    KFD_QUEUE_EVICTION_TRIGGER_USERPTR, /* userptr movement */
+    KFD_QUEUE_EVICTION_TRIGGER_TTM,     /* TTM move buffer */
+    KFD_QUEUE_EVICTION_TRIGGER_SUSPEND, /* GPU suspend */
+    KFD_QUEUE_EVICTION_CRIU_CHECKPOINT, /* CRIU checkpoint */
+    KFD_QUEUE_EVICTION_CRIU_RESTORE     /* CRIU restore */
 };
 
 enum KFD_SVM_UNMAP_TRIGGERS
 {
-    KFD_SVM_UNMAP_TRIGGER_MMU_NOTIFY,
-    KFD_SVM_UNMAP_TRIGGER_MMU_NOTIFY_MIGRATE,
-    KFD_SVM_UNMAP_TRIGGER_UNMAP_FROM_CPU
+    KFD_SVM_UNMAP_TRIGGER_MMU_NOTIFY,         /* MMU notifier CPU buffer movement */
+    KFD_SVM_UNMAP_TRIGGER_MMU_NOTIFY_MIGRATE, /* MMU notifier page migration */
+    KFD_SVM_UNMAP_TRIGGER_UNMAP_FROM_CPU      /* Unmap to free the buffer */
 };
 
 #define KFD_SMI_EVENT_MASK_FROM_INDEX(i) (1ULL << ((i) -1))
@@ -698,6 +699,68 @@ struct kfd_ioctl_spm_args
     __u32 bytes_copied;
     __u32 has_data_loss;
 };
+
+/*
+ * SVM event tracing via SMI system management interface
+ *
+ * Open event file descriptor
+ *    use ioctl AMDKFD_IOC_SMI_EVENTS, pass in gpuid and return a anonymous file
+ *    descriptor to receive SMI events.
+ *    If calling with sudo permission, then file descriptor can be used to receive
+ *    SVM events from all processes, otherwise, to only receive SVM events of same
+ *    process.
+ *
+ * To enable the SVM event
+ *    Write event file descriptor with KFD_SMI_EVENT_MASK_FROM_INDEX(event) bitmap
+ *    mask to start record the event to the kfifo, use bitmap mask combination
+ *    for multiple events. New event mask will overwrite the previous event mask.
+ *    KFD_SMI_EVENT_MASK_FROM_INDEX(KFD_SMI_EVENT_ALL_PROCESS) bit requires sudo
+ *    permisson to receive SVM events from all process.
+ *
+ * To receive the event
+ *    Application can poll file descriptor to wait for the events, then read event
+ *    from the file into a buffer. Each event is one line string message, starting
+ *    with the event id, then the event specific information.
+ *
+ * To decode event information
+ *    The following event format string macro can be used with sscanf to decode
+ *    the specific event information.
+ *    event triggers: the reason to generate the event, defined as enum for unmap,
+ *    eviction and migrate events.
+ *    node, from, to, prefetch_loc, preferred_loc: GPU ID, or 0 for system memory.
+ *    addr: user mode address, in pages
+ *    size: in pages
+ *    pid: the process ID to generate the event
+ *    ns: timestamp in nanosecond-resolution, starts at system boot time but
+ *        stops during suspend
+ *    migrate_update: GPU page fault is recovered by 'M' for migrate, 'U' for update
+ *    rw: 'W' for write page fault, 'R' for read page fault
+ *    rescheduled: 'R' if the queue restore failed and rescheduled to try again
+ *    error_code: migrate failure error code, 0 if no error
+ *    drop_count: how many events dropped when fifo is full
+ */
+#define KFD_EVENT_FMT_UPDATE_GPU_RESET(reset_seq_num, reset_cause)                                 \
+    "%x %s\n", (reset_seq_num), (reset_cause)
+#define KFD_EVENT_FMT_THERMAL_THROTTLING(bitmask, counter) "%llx:%llx\n", (bitmask), (counter)
+#define KFD_EVENT_FMT_VMFAULT(pid, task_name)              "%x:%s\n", (pid), (task_name)
+#define KFD_EVENT_FMT_PAGEFAULT_START(ns, pid, addr, node, rw)                                     \
+    "%lld -%d @%lx(%x) %c\n", (ns), (pid), (addr), (node), (rw)
+#define KFD_EVENT_FMT_PAGEFAULT_END(ns, pid, addr, node, migrate_update)                           \
+    "%lld -%d @%lx(%x) %c\n", (ns), (pid), (addr), (node), (migrate_update)
+#define KFD_EVENT_FMT_MIGRATE_START(                                                               \
+    ns, pid, start, size, from, to, prefetch_loc, preferred_loc, migrate_trigger)                  \
+    "%lld -%d @%lx(%lx) %x->%x %x:%x %d\n", (ns), (pid), (start), (size), (from), (to),            \
+        (prefetch_loc), (preferred_loc), (migrate_trigger)
+#define KFD_EVENT_FMT_MIGRATE_END(ns, pid, start, size, from, to, migrate_trigger, error_code)     \
+    "%lld -%d @%lx(%lx) %x->%x %d %d\n", (ns), (pid), (start), (size), (from), (to),               \
+        (migrate_trigger), (error_code)
+#define KFD_EVENT_FMT_QUEUE_EVICTION(ns, pid, node, evict_trigger)                                 \
+    "%lld -%d %x %d\n", (ns), (pid), (node), (evict_trigger)
+#define KFD_EVENT_FMT_QUEUE_RESTORE(ns, pid, node, rescheduled)                                    \
+    "%lld -%d %x %c\n", (ns), (pid), (node), (rescheduled)
+#define KFD_EVENT_FMT_UNMAP_FROM_GPU(ns, pid, addr, size, node, unmap_trigger)                     \
+    "%lld -%d @%lx(%lx) %x %d\n", (ns), (pid), (addr), (size), (node), (unmap_trigger)
+#define KFD_EVENT_FMT_DROPPED_EVENT(ns, pid, drop_count) "%lld -%d %d\n", (ns), (pid), (drop_count)
 
 /**************************************************************************************************
  * CRIU IOCTLs (Checkpoint Restore In Userspace)
@@ -1726,6 +1789,35 @@ struct kfd_ioctl_pc_sample_args
     __u32 version;
 };
 
+#define KFD_IOC_PROFILER_VERSION_NUM 1
+enum kfd_profiler_ops
+{
+    KFD_IOC_PROFILER_PMC       = 0,
+    KFD_IOC_PROFILER_PC_SAMPLE = 1,
+    KFD_IOC_PROFILER_VERSION   = 2,
+};
+
+/**
+ * Enables/Disables GPU Specific profiler settings
+ */
+struct kfd_ioctl_pmc_settings
+{
+    __u32 gpu_id;           /* This is the user_gpu_id */
+    __u32 lock;             /* Lock GPU for Profiling */
+    __u32 perfcount_enable; /* Force Perfcount Enable for queues on GPU */
+};
+
+struct kfd_ioctl_profiler_args
+{
+    __u32 op; /* kfd_profiler_op */
+    union
+    {
+        struct kfd_ioctl_pc_sample_args pc_sample;
+        struct kfd_ioctl_pmc_settings   pmc;
+        __u32                           version; /* KFD_IOC_PROFILER_VERSION_NUM */
+    };
+};
+
 #define AMDKFD_IOCTL_BASE     'K'
 #define AMDKFD_IO(nr)         _IO(AMDKFD_IOCTL_BASE, nr)
 #define AMDKFD_IOR(nr, type)  _IOR(AMDKFD_IOCTL_BASE, nr, type)
@@ -1832,7 +1924,9 @@ struct kfd_ioctl_pc_sample_args
 
 #define AMDKFD_IOC_PC_SAMPLE AMDKFD_IOWR(0x85, struct kfd_ioctl_pc_sample_args)
 
+#define AMDKFD_IOC_PROFILER AMDKFD_IOWR(0x86, struct kfd_ioctl_profiler_args)
+
 #define AMDKFD_COMMAND_START_2 0x80
-#define AMDKFD_COMMAND_END_2   0x86
+#define AMDKFD_COMMAND_END_2   0x87
 
 #endif

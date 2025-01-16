@@ -7,5 +7,7 @@ endif()
 
 add_subdirectory(include)
 add_subdirectory(lib)
+add_subdirectory(libexec)
 add_subdirectory(bin)
+add_subdirectory(sbin)
 add_subdirectory(docs)

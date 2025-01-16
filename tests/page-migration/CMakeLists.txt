@@ -17,18 +17,18 @@ else()
     set(PRELOAD_ENV "LD_PRELOAD=$<TARGET_FILE:rocprofiler-sdk-json-tool>")
 endif()
 
-add_test(NAME test-page-migration-execute COMMAND $<TARGET_FILE:page-migration>)
+add_test(NAME test-page-migration-execute COMMAND $<TARGET_FILE:page-migration> 4 1024)
 
 set(page-migration-env
     "${PRELOAD_ENV}"
     "ROCPROFILER_TOOL_OUTPUT_FILE=page-migration-test.json"
-    "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:rocprofiler-sdk::rocprofiler-shared-library>:$ENV{LD_LIBRARY_PATH}"
+    "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:rocprofiler-sdk::rocprofiler-sdk-shared-library>:$ENV{LD_LIBRARY_PATH}"
     )
 
 set_tests_properties(
     test-page-migration-execute
     PROPERTIES TIMEOUT
-               45
+               60
                LABELS
                "integration-tests"
                ENVIRONMENT
@@ -38,7 +38,9 @@ set_tests_properties(
                SKIP_REGULAR_EXPRESSION
                "KFD does not support SVM event reporting"
                WORKING_DIRECTORY
-               ${CMAKE_CURRENT_BINARY_DIR})
+               ${CMAKE_CURRENT_BINARY_DIR}
+               ATTACHED_FILES
+               ${CMAKE_CURRENT_BINARY_DIR}/page-migration-test.json)
 
 # copy to binary directory
 rocprofiler_configure_pytest_files(COPY validate.py conftest.py CONFIG pytest.ini)
@@ -60,4 +62,6 @@ set_tests_properties(
                SKIP_REGULAR_EXPRESSION
                "KFD does not support SVM event reporting"
                WORKING_DIRECTORY
-               ${CMAKE_CURRENT_BINARY_DIR})
+               ${CMAKE_CURRENT_BINARY_DIR}
+               ATTACHED_FILES
+               ${CMAKE_CURRENT_BINARY_DIR}/page-migration-test.json)

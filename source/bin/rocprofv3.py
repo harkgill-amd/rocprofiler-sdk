@@ -31,6 +31,16 @@ def fatal_error(msg, exit_code=1):
     sys.exit(exit_code)
 
 
+def format_help(formatter, w=120, h=40):
+    """Return a wider HelpFormatter, if possible."""
+    try:
+        kwargs = {"width": w, "max_help_position": h}
+        formatter(None, **kwargs)
+        return lambda prog: formatter(prog, **kwargs)
+    except TypeError:
+        return formatter
+
+
 def strtobool(val):
     """Convert a string representation of truth to true or false.
     True values are 'y', 'yes', 't', 'true', 'on', and '1'; false values
@@ -80,7 +90,7 @@ For MPI applications (or other job launchers such as SLURM), place rocprofv3 ins
         description="ROCProfilerV3 Run Script",
         usage="%(prog)s [options] -- <application> [application options]",
         epilog=usage_examples,
-        formatter_class=argparse.RawTextHelpFormatter,
+        formatter_class=format_help(argparse.RawTextHelpFormatter),
     )
 
     def add_parser_bool_argument(gparser, *args, **kwargs):
@@ -100,13 +110,13 @@ For MPI applications (or other job launchers such as SLURM), place rocprofv3 ins
     io_options.add_argument(
         "-i",
         "--input",
-        help="Input file for counter collection",
+        help="Input file for run configuration (JSON or YAML) or counter collection (TXT)",
         required=False,
     )
     io_options.add_argument(
         "-o",
         "--output-file",
-        help="For the output file name",
+        help="For the output file name. If nothing specified default path is `%%hostname%%/%%pid%%`",
         default=os.environ.get("ROCPROF_OUTPUT_FILE_NAME", None),
         type=str,
         required=False,
@@ -114,7 +124,7 @@ For MPI applications (or other job launchers such as SLURM), place rocprofv3 ins
     io_options.add_argument(
         "-d",
         "--output-directory",
-        help="For adding output path where the output files will be saved",
+        help="For adding output path where the output files will be saved. If nothing specified default path is `%%hostname%%/%%pid%%`",
         default=os.environ.get("ROCPROF_OUTPUT_PATH", None),
         type=str,
         required=False,
@@ -134,6 +144,13 @@ For MPI applications (or other job launchers such as SLURM), place rocprofv3 ins
         choices=("fatal", "error", "warning", "info", "trace", "env"),
         type=str.lower,
     )
+    io_options.add_argument(
+        "-E",
+        "--extra-counters",
+        help="Path to YAML file containing extra counter definitions",
+        type=str,
+        required=False,
+    )
 
     aggregate_tracing_options = parser.add_argument_group("Aggregate tracing options")
 
@@ -141,15 +158,45 @@ For MPI applications (or other job launchers such as SLURM), place rocprofv3 ins
         aggregate_tracing_options,
         "-r",
         "--runtime-trace",
-        help="Collect tracing data for HIP runtime API, Marker (ROCTx) API, RCCL API, Memory operations (copies and scratch), and Kernel dispatches. Similar to --sys-trace but without tracing HIP compiler API and the underlying HSA API.",
+        help="Collect tracing data for HIP runtime API, Marker (ROCTx) API, RCCL API, Memory operations (copies, scratch, and allocation), and Kernel dispatches. Similar to --sys-trace but without tracing HIP compiler API and the underlying HSA API.",
     )
     add_parser_bool_argument(
         aggregate_tracing_options,
         "-s",
         "--sys-trace",
-        help="Collect tracing data for HIP API, HSA API, Marker (ROCTx) API, RCCL API, Memory operations (copies and scratch), and Kernel dispatches.",
+        help="Collect tracing data for HIP API, HSA API, Marker (ROCTx) API, RCCL API, Memory operations (copies, scratch, and allocations), and Kernel dispatches.",
     )
 
+    pc_sampling_options = parser.add_argument_group("PC sampling options")
+
+    add_parser_bool_argument(
+        pc_sampling_options,
+        "--pc-sampling-beta-enabled",
+        help="enable pc sampling support; beta version",
+    )
+
+    pc_sampling_options.add_argument(
+        "--pc-sampling-unit",
+        help="",
+        default=None,
+        type=str.lower,
+        choices=("instructions", "cycles", "time"),
+    )
+
+    pc_sampling_options.add_argument(
+        "--pc-sampling-method",
+        help="",
+        default=None,
+        type=str.lower,
+        choices=("stochastic", "host_trap"),
+    )
+
+    pc_sampling_options.add_argument(
+        "--pc-sampling-interval",
+        help="",
+        default=None,
+        type=int,
+    )
     basic_tracing_options = parser.add_argument_group("Basic tracing options")
 
     # Add the arguments
@@ -161,7 +208,7 @@ For MPI applications (or other job launchers such as SLURM), place rocprofv3 ins
     add_parser_bool_argument(
         basic_tracing_options,
         "--marker-trace",
-        help="For collecting Marker (ROCTx) Traces. Similar to --roctx-trace option in earlier rocprof versions but with improved ROCtx library with more features",
+        help="For collecting Marker (ROCTx) Traces. Similar to --roctx-trace option in earlier rocprof versions but with improved ROCTx library with more features",
     )
     add_parser_bool_argument(
         basic_tracing_options,
@@ -172,6 +219,11 @@ For MPI applications (or other job launchers such as SLURM), place rocprofv3 ins
         basic_tracing_options,
         "--memory-copy-trace",
         help="For collecting Memory Copy Traces. This was part of HIP and HSA traces in previous rocprof versions but is now a separate option",
+    )
+    add_parser_bool_argument(
+        basic_tracing_options,
+        "--memory-allocation-trace",
+        help="For collecting Memory Allocation Traces. Displays starting address, allocation size, and agent where allocation occurred.",
     )
     add_parser_bool_argument(
         basic_tracing_options,
@@ -225,6 +277,18 @@ For MPI applications (or other job launchers such as SLURM), place rocprofv3 ins
         extended_tracing_options,
         "--hsa-finalizer-trace",
         help="For collecting HSA API Traces (Finalizer-extension API), e.g. HSA functions prefixed with only 'hsa_ext_program_' (i.e. hsa_ext_program_create).",
+    )
+
+    counter_collection_options = parser.add_argument_group("Counter collection options")
+
+    counter_collection_options.add_argument(
+        "--pmc",
+        help=(
+            "Specify Performance Monitoring Counters to collect(comma OR space separated in case of more than 1 counters). "
+            "Note: job will fail if entire set of counters cannot be collected in single pass"
+        ),
+        default=None,
+        nargs="*",
     )
 
     post_processing_options = parser.add_argument_group("Post-processing tracing options")
@@ -315,6 +379,23 @@ For MPI applications (or other job launchers such as SLURM), place rocprofv3 ins
         default=None,
         type=str,
     )
+    filter_options.add_argument(
+        "-p",
+        "--collection-period",
+        help="The times are specified in seconds by default, but the unit can be changed using the `--collection-period-unit` or `-pu` option. Start Delay Time is the time in seconds before the collection begins, Collection Time is the duration in seconds for which data is collected, and Rate is the number of times the cycle is repeated. A repeat of 0 indicates that the cycle will repeat indefinitely. Users can specify multiple configurations, each defined by a triplet in the format `start_delay:collection_time:repeat`",
+        nargs="+",
+        default=None,
+        type=str,
+        metavar=("(START_DELAY_TIME):(COLLECTION_TIME):(REPEAT)"),
+    )
+    filter_options.add_argument(
+        "--collection-period-unit",
+        help="To change the unit used in `--collection-period` or `-p`, you can specify the desired unit using the `--collection-period-unit` or `-pu` option. The available units are `hour` for hours, `min` for minutes, `sec` for seconds, `msec` for milliseconds, `usec` for microseconds, and `nsec` for nanoseconds",
+        nargs=1,
+        default=["sec"],
+        type=str,
+        choices=("hour", "min", "sec", "msec", "usec", "nsec"),
+    )
 
     perfetto_options = parser.add_argument_group("Perfetto-specific options")
 
@@ -353,8 +434,8 @@ For MPI applications (or other job launchers such as SLURM), place rocprofv3 ins
     add_parser_bool_argument(
         display_options,
         "-L",
-        "--list-metrics",
-        help="List metrics for counter collection. Backed by a valid YAML file. In earlier rocprof versions, this was known as --list-basic, --list-derived and --list-counters",
+        "--list-avail",
+        help="List available PC sampling configurations and metrics for counter collection. Backed by a valid YAML file. In earlier rocprof versions, this was known as --list-basic, --list-derived and --list-counters",
     )
 
     advanced_options = parser.add_argument_group("Advanced options")
@@ -435,7 +516,6 @@ def parse_json(json_file):
 
 
 def parse_text(text_file):
-
     def process_line(line):
         if "pmc:" not in line:
             return ""
@@ -502,7 +582,6 @@ def patch_args(data):
 
 
 def get_args(cmd_args, inp_args):
-
     def ensure_type(name, var, type_id):
         if not isinstance(var, type_id):
             raise TypeError(
@@ -619,9 +698,14 @@ def run(app_args, args, **kwargs):
     ROCPROF_KOKKOSP_LIBRARY = (
         f"{ROCM_DIR}/lib/rocprofiler-sdk/librocprofiler-sdk-tool-kokkosp.so"
     )
+    ROCPROF_LIST_AVAIL_TOOL_LIBRARY = f"{ROCM_DIR}/libexec/librocprofv3-list-avail.so"
 
     prepend_preload = [itr for itr in args.preload if itr]
-    append_preload = [ROCPROF_TOOL_LIBRARY, ROCPROF_SDK_LIBRARY]
+    append_preload = [
+        ROCPROF_TOOL_LIBRARY,
+        ROCPROF_LIST_AVAIL_TOOL_LIBRARY,
+        ROCPROF_SDK_LIBRARY,
+    ]
 
     update_env("LD_PRELOAD", ":".join(prepend_preload), prepend=True)
     update_env("LD_PRELOAD", ":".join(append_preload), append=True)
@@ -644,13 +728,13 @@ def run(app_args, args, **kwargs):
 
     update_env("ROCPROF_OUTPUT_FILE_NAME", _output_file)
     update_env("ROCPROF_OUTPUT_PATH", _output_path)
-    if app_pass is not None:
+    if app_pass is not None and args.sub_directory is not None:
         app_env["ROCPROF_OUTPUT_PATH"] = os.path.join(
             f"{_output_path}", f"{args.sub_directory}{app_pass}"
         )
 
     if args.output_file is not None or args.output_directory is not None:
-        update_env("ROCPROF_OUTPUT_LIST_METRICS_FILE", True)
+        update_env("ROCPROF_OUTPUT_LIST_AVAIL_FILE", True)
 
     if not args.output_format:
         args.output_format = ["csv"]
@@ -674,6 +758,7 @@ def run(app_args, args, **kwargs):
             "marker_trace",
             "kernel_trace",
             "memory_copy_trace",
+            "memory_allocation_trace",
             "scratch_memory_trace",
             "rccl_trace",
         ):
@@ -685,6 +770,7 @@ def run(app_args, args, **kwargs):
             "marker_trace",
             "kernel_trace",
             "memory_copy_trace",
+            "memory_allocation_trace",
             "scratch_memory_trace",
             "rccl_trace",
         ):
@@ -712,6 +798,7 @@ def run(app_args, args, **kwargs):
             ["rccl_trace", "RCCL_API_TRACE"],
             ["kernel_trace", "KERNEL_TRACE"],
             ["memory_copy_trace", "MEMORY_COPY_TRACE"],
+            ["memory_allocation_trace", "MEMORY_ALLOCATION_TRACE"],
             ["scratch_memory_trace", "SCRATCH_MEMORY_TRACE"],
         ]
     ).items():
@@ -779,10 +866,37 @@ def run(app_args, args, **kwargs):
         overwrite_if_true=True,
     )
     update_env(
-        "ROCPROF_LIST_METRICS",
-        args.list_metrics,
+        "ROCPROF_LIST_AVAIL",
+        args.list_avail,
         overwrite_if_true=True,
     )
+    if args.collection_period:
+        factors = {
+            "hour": 60 * 60 * 1e9,
+            "min": 60 * 1e9,
+            "sec": 1e9,
+            "msec": 1e6,
+            "usec": 1e3,
+            "nsec": 1,
+        }
+
+        def to_nanosec(val):
+            return int(float(val) * factors[args.collection_period_unit[0]])
+
+        def convert_triplet(delay, duration, repeat):
+            return ":".join(
+                [
+                    f"{itr}"
+                    for itr in [to_nanosec(delay), to_nanosec(duration), int(repeat)]
+                ]
+            )
+
+        periods = [convert_triplet(*itr.split(":")) for itr in args.collection_period]
+        update_env(
+            "ROCPROF_COLLECTION_PERIOD",
+            ";".join(periods),
+            overwrite_if_true=True,
+        )
 
     if args.log_level and args.log_level not in ("env"):
         for itr in ("ROCPROF", "ROCPROFILER", "ROCTX"):
@@ -829,8 +943,13 @@ def run(app_args, args, **kwargs):
             sys.stderr.write("\n")
         sys.stderr.flush()
 
-    if args.list_metrics:
-        app_args = [f"{ROCM_DIR}/lib/rocprofiler-sdk/rocprofv3-trigger-list-metrics"]
+    if args.list_avail:
+        update_env("ROCPROFILER_PC_SAMPLING_BETA_ENABLED", "on")
+        path = os.path.join(f"{ROCM_DIR}", "bin/rocprofv3_avail")
+        if app_args:
+            exit_code = subprocess.check_call(["python3", path], env=app_env)
+        else:
+            app_args = ["python3", path]
 
     elif not app_args:
         log_config(app_env)
@@ -851,6 +970,11 @@ def run(app_args, args, **kwargs):
     if args.kernel_iteration_range:
         update_env("ROCPROF_KERNEL_FILTER_RANGE", ", ".join(args.kernel_iteration_range))
 
+    if args.extra_counters is not None:
+        with open(args.extra_counters, "r") as e_file:
+            e_file_contents = e_file.read()
+            update_env("ROCPROF_EXTRA_COUNTERS_CONTENTS", e_file_contents, overwrite=True)
+
     if args.pmc:
         update_env("ROCPROF_COUNTER_COLLECTION", True, overwrite=True)
         update_env(
@@ -861,6 +985,36 @@ def run(app_args, args, **kwargs):
 
     if args.log_level in ("info", "trace", "env"):
         log_config(app_env)
+
+    if args.pc_sampling_unit or args.pc_sampling_method or args.pc_sampling_interval:
+
+        if (
+            not args.pc_sampling_beta_enabled
+            and os.environ.get("ROCPROFILER_PC_SAMPLING_BETA_ENABLED", None) is None
+        ):
+            fatal_error(
+                "PC sampling unavailable. The feature is implicitly disabled. To enable it, use --pc-sampling-beta-enable option or set ROCPROFILER_PC_SAMPLING_BETA_ENABLED=ON in the environment"
+            )
+
+        update_env(
+            "ROCPROFILER_PC_SAMPLING_BETA_ENABLED",
+            args.pc_sampling_beta_enabled,
+            overwrite_if_true=True,
+        )
+
+        if not (
+            args.pc_sampling_unit
+            and args.pc_sampling_method
+            and args.pc_sampling_interval
+        ):
+            fatal_error("All three PC sampling configurations need to be set")
+
+        if args.pc_sampling_interval <= 0:
+            fatal_error("PC sampling interval must be a positive number.")
+
+        update_env("ROCPROF_PC_SAMPLING_UNIT", args.pc_sampling_unit)
+        update_env("ROCPROF_PC_SAMPLING_METHOD", args.pc_sampling_method)
+        update_env("ROCPROF_PC_SAMPLING_INTERVAL", args.pc_sampling_interval)
 
     if use_execv:
         # does not return
@@ -885,7 +1039,7 @@ def main(argv=None):
     if len(inp_args) == 1:
         args = get_args(cmd_args, inp_args[0])
         pass_idx = None
-        if hasattr(args, "pmc") and args.pmc is not None and len(args.pmc) > 0:
+        if has_set_attr(args, "pmc") and len(args.pmc) > 0:
             pass_idx = 1
         run(app_args, args, pass_id=pass_idx)
     else:

@@ -24,6 +24,7 @@
 #pragma once
 
 #include <rocprofiler-sdk/fwd.h>
+#include <rocprofiler-sdk/hsa.h>
 #include <rocprofiler-sdk/internal_threading.h>
 
 namespace rocprofiler
@@ -65,6 +66,8 @@ ROCPROFILER_CXX_SPECIALIZE_HANDLE_HASHER(rocprofiler_callback_thread_t)
 ROCPROFILER_CXX_SPECIALIZE_HANDLE_HASHER(hsa_agent_t)
 ROCPROFILER_CXX_SPECIALIZE_HANDLE_HASHER(hsa_signal_t)
 ROCPROFILER_CXX_SPECIALIZE_HANDLE_HASHER(hsa_executable_t)
+ROCPROFILER_CXX_SPECIALIZE_HANDLE_HASHER(hsa_region_t)
+ROCPROFILER_CXX_SPECIALIZE_HANDLE_HASHER(hsa_amd_memory_pool_t)
 
 #undef ROCPROFILER_CXX_SPECIALIZE_HANDLE_HASHER
 }  // namespace std

@@ -6,6 +6,7 @@ set(ROCPROFILER_LIB_HSA_SOURCES
     async_copy.cpp
     hsa_barrier.cpp
     hsa.cpp
+    memory_allocation.cpp
     pc_sampling.hpp
     profile_serializer.cpp
     queue_controller.cpp
@@ -16,6 +17,7 @@ set(ROCPROFILER_LIB_HSA_HEADERS
     agent_cache.hpp
     aql_packet.hpp
     async_copy.hpp
+    memory_allocation.hpp
     defines.hpp
     hsa_barrier.hpp
     hsa.hpp
@@ -28,7 +30,7 @@ set(ROCPROFILER_LIB_HSA_HEADERS
     scratch_memory.hpp
     utils.hpp)
 
-target_sources(rocprofiler-object-library PRIVATE ${ROCPROFILER_LIB_HSA_SOURCES}
-                                                  ${ROCPROFILER_LIB_HSA_HEADERS})
+target_sources(rocprofiler-sdk-object-library PRIVATE ${ROCPROFILER_LIB_HSA_SOURCES}
+                                                      ${ROCPROFILER_LIB_HSA_HEADERS})
 
 add_subdirectory(details)

@@ -11,14 +11,14 @@ set(ROCPROFILER_HEADER_FILES
     rocprofiler.h
     # secondary headers
     agent.h
-    agent_profile.h
+    device_counting_service.h
     buffer.h
     buffer_tracing.h
     callback_tracing.h
     context.h
     counters.h
     defines.h
-    dispatch_profile.h
+    dispatch_counting_service.h
     external_correlation.h
     fwd.h
     hip.h
@@ -26,6 +26,7 @@ set(ROCPROFILER_HEADER_FILES
     intercept_table.h
     internal_threading.h
     marker.h
+    ompt.h
     pc_sampling.h
     profile_config.h
     registration.h
@@ -41,6 +42,9 @@ install(
 add_subdirectory(hip)
 add_subdirectory(hsa)
 add_subdirectory(marker)
+add_subdirectory(ompt)
 add_subdirectory(rccl)
 add_subdirectory(cxx)
+add_subdirectory(kfd)
 add_subdirectory(amd_detail)
+add_subdirectory(experimental)

@@ -559,6 +559,14 @@
                                 "required": [
                                     "dimension_ids"
                                 ]
+                            },
+                            "pc_sample_instructions": {
+                                "type": "array",
+                                "description": "Array of decoded instructions matching sampled PCs from pc_sample_host_trap section."
+                            },
+                            "pc_sample_comments": {
+                                "type": "array",
+                                "description": "Comments matching assembly instructions from pc_sample_instructions array. If debug symbols are available, comments provide instructions to source-line mapping. Otherwise, a comment is an empty string."
                             }
                         }
                     },
@@ -714,6 +722,97 @@
                                 "formatted_kernel_name",
                                 "demangled_kernel_name",
                                 "truncated_kernel_name"
+                            ]
+                        }
+                    },
+                    "host_functions": {
+                        "type": "array",
+                        "description": "Host function records.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "size": {
+                                    "type": "integer",
+                                    "description": "Size of the host function record."
+                                },
+                                "host_function_id": {
+                                    "type": "integer",
+                                    "description": "ID of the HIP host function."
+                                },
+                                "kernel_id": {
+                                    "type": "integer",
+                                    "description": "ID of the corressponding kernel."
+                                },
+                                "code_object_id": {
+                                    "type": "integer",
+                                    "description": "ID of the corressponding code object."
+                                },
+                                "host_function_address": {
+                                    "type": "integer",
+                                    "description": "Address of the host function registered."
+                                },
+                                "modules_address": {
+                                    "type": "integer",
+                                    "description": "Address of the hip fat binary registered"
+                                },
+                                "device_function": {
+                                    "type": "string",
+                                    "description": "Device function name registered"
+                                },
+                                "thread_limit": {
+                                    "type": "integer",
+                                    "description": "Size of the thread limit."
+                                },
+                                "thread_id_address": {
+                                    "type": "integer",
+                                    "description": "Address of thread Id."
+                                },
+                                "block_id_address": {
+                                    "type": "string",
+                                    "description": "Address of Block Id."
+                                },
+                                "block_dim_address": {
+                                    "type": "string",
+                                    "description": "Address of Block Dimension"
+                                },
+                                "grid_dim_address": {
+                                    "type": "string",
+                                    "description": "Address of the Grid Dimension."
+                                },
+                                "workgroup_size_address": {
+                                    "type": "string",
+                                    "description": "Address of the work group size."
+                                },
+                                "formatted_host_function_name": {
+                                    "type": "string",
+                                    "description": "Formatted name of the device function."
+                                },
+                                "demangled_host_function_name": {
+                                    "type": "string",
+                                    "description": "Demangled name of device function."
+                                },
+                                "truncated_host_function_name": {
+                                    "type": "string",
+                                    "description": "Truncated name of device function."
+                                }
+                            },
+                            "required": [
+                                "size",
+                                "host_function_id",
+                                "kernel_id",
+                                "code_object_id",
+                                "host_function_address",
+                                "modules_address",
+                                "device_function",
+                                "thread_limit",
+                                "thread_id_address",
+                                "block_id_address",
+                                "block_dim_address",
+                                "grid_dim_address",
+                                "workgroup_size_address",
+                                "formatted_host_function_name",
+                                "demangled_host_function_name",
+                                "truncated_host_function_name"
                             ]
                         }
                     },
@@ -925,7 +1024,129 @@
                                         "lds_block_size_v"
                                     ]
                                 }
-                            }
+                            },
+                            "pc_sample_host_trap": {
+                                "type": "array",
+                                "description": "Host Trap PC Sampling records.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "hw_id": {
+                                            "type": "object",
+                                            "description" : "Describes hardware part on which sampled wave was running.",
+                                            "properties": {
+                                                "chiplet":{
+                                                    "type": "integer",
+                                                    "description": "Chiplet index."
+                                                },
+                                                "wave_id ":{
+                                                    "type": "integer",
+                                                    "description": "Wave slot index."
+                                                },
+                                                "simd_id":{
+                                                    "type": "integer",
+                                                    "description": "SIMD index."
+                                                },
+                                                "pipe_id ":{
+                                                    "type": "integer",
+                                                    "description":  "Pipe index."
+                                                },
+                                                "cu_or_wgp_id":{
+                                                    "type": "integer",
+                                                    "description": "Index of compute unit or workgroup processer."
+                                                },
+                                                "shader_array_id":{
+                                                    "type": "integer",
+                                                    "description": "Shader array index."
+                                                },
+                                                "shader_engine_id":{
+                                                    "type": "integer",
+                                                    "description": "Shader engine index."
+                                                },
+                                                "workgroup_id":{
+                                                    "type": "integer",
+                                                    "description": "Workgroup position in the 3D."
+                                                },
+                                                "vm_id":{
+                                                    "type": "integer",
+                                                    "description": "Virtual memory ID."
+                                                },
+                                                "queue_id":{
+                                                    "type": "integer",
+                                                    "description": "Queue id."
+                                                },
+                                                "microengine_id":{
+                                                    "type": "integer",
+                                                    "description": "ACE (microengine) index."
+                                                }
+                                            }
+                                           },
+                                            "pc": {
+                                            "type": "object",
+                                            "description": "Encapsulates information about sampled PC.",
+                                            "properties": {
+                                                "code_object_id":{
+                                                    "type": "integer",
+                                                    "description": "Code object id"
+                                                },
+                                                "code_object_offset":{
+                                                    "type": "integer",
+                                                    "description": "Offset within the object if the latter is known. Otherwise, virtual address of the PC."
+                                                }
+                                            }
+                                        },
+                                            "exec_mask":{
+                                                "type": "integer",
+                                                "description": "Execution mask indicating active SIMD lanes of sampled wave."
+                                            },
+                                            "timestamp":{
+                                                "type": "integer",
+                                                "description": "Timestamp."
+                                            },
+                                            "dispatch_id":{
+                                                "type": "integer",
+                                                "description": "Dispatch id."
+                                            },
+                                            "correlation_id": {
+                                                    "type": "object",
+                                                    "description": "Correlation ID information.",
+                                                    "properties": {
+                                                        "internal": {
+                                                            "type": "integer",
+                                                            "description": "Internal correlation ID."
+                                                        },
+                                                        "external": {
+                                                            "type": "integer",
+                                                            "description": "External correlation ID."
+                                                        }
+                                                    }
+                                                },
+                                            "rocprofiler_dim3_t": {
+                                                "type": "object",
+                                                "description": " Position of the workgroup in 3D grid.",
+                                                "properties": {
+                                                     "x": {
+                                                        "type": "integer",
+                                                        "description": "Dimension x."
+                                                     },
+                                                     "y": {
+                                                        "type": "integer",
+                                                        "description": "Dimension y."
+                                                     },
+                                                     "z": {
+                                                        "type": "integer",
+                                                        "description": "Dimension z."
+                                                     }
+                                                }
+                                            },
+                                            "wave_in_group": {
+                                                "type": "integer",
+                                                "description": "Wave position within the workgroup (0-31)."
+                                            }
+                                        }
+                                    }
+                                }
+
                         }
                     },
                     "buffer_records": {
@@ -1372,6 +1593,90 @@
                                         "dst_agent_id",
                                         "src_agent_id",
                                         "bytes"
+                                    ]
+                                }
+                            },
+                            "memory_allocation": {
+                                "type": "array",
+                                "description": "Memory allocation records.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "size": {
+                                            "type": "integer",
+                                            "description": "Size of the Marker API record."
+                                        },
+                                        "kind": {
+                                            "type": "integer",
+                                            "description": "Kind of the Marker API."
+                                        },
+                                        "operation": {
+                                            "type": "integer",
+                                            "description": "Operation of the Marker API."
+                                        },
+                                        "correlation_id": {
+                                            "type": "object",
+                                            "description": "Correlation ID information.",
+                                            "properties": {
+                                                "internal": {
+                                                    "type": "integer",
+                                                    "description": "Internal correlation ID."
+                                                },
+                                                "external": {
+                                                    "type": "integer",
+                                                    "description": "External correlation ID."
+                                                }
+                                            },
+                                            "required": [
+                                                "internal",
+                                                "external"
+                                            ]
+                                        },
+                                        "start_timestamp": {
+                                            "type": "integer",
+                                            "description": "Start timestamp."
+                                        },
+                                        "end_timestamp": {
+                                            "type": "integer",
+                                            "description": "End timestamp."
+                                        },
+                                        "thread_id": {
+                                            "type": "integer",
+                                            "description": "Thread ID."
+                                        },
+                                        "agent_id": {
+                                            "type": "object",
+                                            "description": "Agent ID.",
+                                            "properties": {
+                                                "handle": {
+                                                    "type": "integer",
+                                                    "description": "Handle of the agent."
+                                                }
+                                            },
+                                            "required": [
+                                                "handle"
+                                            ]
+                                        },
+                                        "address": {
+                                            "type": "string",
+                                            "description": "Starting address for allocation or freeing memory."
+                                        },
+                                        "allocation_size": {
+                                            "type": "integer",
+                                            "description": "Size of memory allocation. Free operations not tracked currently."
+                                        }
+                                    },
+                                    "required": [
+                                        "size",
+                                        "kind",
+                                        "operation",
+                                        "correlation_id",
+                                        "start_timestamp",
+                                        "end_timestamp",
+                                        "thread_id",
+					"agent_id",
+                                        "address",
+                                        "allocation_size"
                                     ]
                                 }
                             }

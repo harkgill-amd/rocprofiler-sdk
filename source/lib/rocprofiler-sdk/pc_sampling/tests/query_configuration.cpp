@@ -46,7 +46,7 @@ struct callback_data
 {
     rocprofiler_client_id_t*                    client_id             = nullptr;
     rocprofiler_client_finalize_t               client_fini_func      = nullptr;
-    rocprofiler_context_id_t                    client_ctx            = {};
+    rocprofiler_context_id_t                    client_ctx            = {0};
     rocprofiler_buffer_id_t                     client_buffer         = {};
     rocprofiler_callback_thread_t               client_thread         = {};
     uint64_t                                    client_workflow_count = {};
@@ -219,9 +219,20 @@ TEST(pc_sampling, query_configs_agent_does_not_exists)
 {
     int cb_data = USER_DATA_VAL;
     // The agent does not exists
-    EXPECT_EQ(rocprofiler_query_pc_sampling_agent_configurations(
-                  rocprofiler_agent_id_t{.handle = 0xDEADBEEF}, check_all_configs_cb, &cb_data),
-              ROCPROFILER_STATUS_ERROR_AGENT_NOT_FOUND);
+    auto status = rocprofiler_query_pc_sampling_agent_configurations(
+        rocprofiler_agent_id_t{.handle = 0xDEADBEEF}, check_all_configs_cb, &cb_data);
+
+    std::set<rocprofiler_status_t> reasons_to_skip_test = {
+        ROCPROFILER_STATUS_ERROR_NOT_IMPLEMENTED,
+        ROCPROFILER_STATUS_ERROR_NOT_AVAILABLE,
+        ROCPROFILER_STATUS_ERROR_INCOMPATIBLE_KERNEL};
+
+    // emit the error to skip a test
+    if(reasons_to_skip_test.count(status) > 0) ROCP_ERROR << "PC sampling unavailable";
+
+    // If PC sampling API is enabled, and this system supports this feature,
+    // then assert the agent with id `0xDEADBEEF` does not exist.
+    EXPECT_EQ(status, ROCPROFILER_STATUS_ERROR_AGENT_NOT_FOUND);
 }
 
 TEST(pc_sampling, query_configs_after_service_setup)
@@ -285,7 +296,8 @@ TEST(pc_sampling, query_configs_after_service_setup)
                                                                    pcs_config.method,
                                                                    pcs_config.unit,
                                                                    interval,
-                                                                   cb_data->client_buffer),
+                                                                   cb_data->client_buffer,
+                                                                   0),
                          "Failed to configure PC sampling service");
 
         // query configuration and expect to see `pcs_config->max_interval` as the `interval`

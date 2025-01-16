@@ -41,6 +41,7 @@ extern "C" {
 rocprofiler_status_t
 rocprofiler_create_context(rocprofiler_context_id_t* context_id)
 {
+    if(context_id->handle != 0) return ROCPROFILER_STATUS_ERROR_CONTEXT_ID_NOT_ZERO;
     // context already registered
     if(rocprofiler::context::get_registered_context(*context_id))
         return ROCPROFILER_STATUS_ERROR_CONTEXT_INVALID;
@@ -77,6 +78,9 @@ rocprofiler_stop_context(rocprofiler_context_id_t context_id)
     if(context_id.handle == rocprofiler_context_none.handle ||
        !rocprofiler::context::get_registered_context(context_id))
         return ROCPROFILER_STATUS_ERROR_CONTEXT_NOT_FOUND;
+
+    // if finalized, context is already stopped
+    if(rocprofiler::registration::get_fini_status() > 0) return ROCPROFILER_STATUS_SUCCESS;
 
     return rocprofiler::context::stop_context(context_id);
 }

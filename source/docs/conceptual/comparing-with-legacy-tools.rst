@@ -78,7 +78,7 @@ ROCprofiler-SDK introduces a new command-line tool, `rocprofv3`, which is a more
      - `--roctx-trace`
      - `--roctx-trace`
      - `--marker-trace`
-     - Improved ROCtx library with more features
+     - Improved ROCTx library with more features
      - 
    * - Basic tracing options
      - Memory Copy Trace
@@ -86,7 +86,14 @@ ROCprofiler-SDK introduces a new command-line tool, `rocprofv3`, which is a more
      - Part of HIP and HSA Traces
      - `--memory-copy-trace`
      - Provides granularity for memory move operations
-     - 
+     -
+   * - Basic tracing options
+     - Memory allocation Trace
+     - *Not Available*
+     - *Not Available*
+     - `--memory-allocation-trace`
+     - New option for collecting Memory Allocation Traces. Displays starting address, allocation size, and agent where allocation occurred.
+     -  
    * - Basic tracing options
      - Kernel Trace
      - `--kernel-trace`
@@ -135,6 +142,20 @@ ROCprofiler-SDK introduces a new command-line tool, `rocprofv3`, which is a more
      - Part of `--hsa-trace` option
      - `--hsa-finalizer-trace`
      - New option for collecting HSA API Traces (Finalizer-extension API), e.g. HSA functions prefixed with only `hsa_ext_program_` (i.e. hsa_ext_program_create)
+     - 
+   * - Advanced tracing options
+     - Kokkos trace
+     - *Not Available*
+     - *Not Available*
+     - `--kokkos-trace`
+     - New option to enable built-in Kokkos Tools support (implies --marker-trace and --kernel-rename)
+     -
+   * - Advanced tracing options
+     - RCCL trace
+     - *Not Available*
+     - *Not Available*
+     - `--rccl-trace`
+     - For collecting RCCL(ROCm Communication Collectives Library. Also pronounced as 'Rickle' ) Traces
      - 
    * - Aggregate tracing options
      - Sys Trace
@@ -214,10 +235,10 @@ ROCprofiler-SDK introduces a new command-line tool, `rocprofv3`, which is a more
      - New option to output summary in desired time units {sec,msec,usec,nsec}
      - 
    * - Display options
-     - List Metrics
+     - List available basic and derived metrics and PC sampling configurations
      - `--list-basic`, `--list-derived`
      - `--list-counters`
-     - `-L`, `--list-metrics`
+     - `-L`, `--list-avail`
      - A valid YAML is supported for this option now
      - 
    * - Perfetto-specific options
@@ -300,6 +321,13 @@ ROCprofiler-SDK introduces a new command-line tool, `rocprofv3`, which is a more
        | # YAML and JSON formats are more readable and easy to maintain.
        | # Allows flexibility to add more features for the tool input
      -
+   * - I/O options
+     - Command-line Counter Collection
+     - *Not Available*
+     - *Not Available*
+     - `--pmc`
+     - New option to collect performance counters from command line. Counters should be comma OR space separated in case of more than 1 counters
+     -
    * - I/O options   
      - Providing Custom metrics file
      - `-m`  <metric file>
@@ -318,9 +346,9 @@ ROCprofiler-SDK introduces a new command-line tool, `rocprofv3`, which is a more
      - Trace Period
      - `--trace-period`
      - `-tp | --trace-period`
-     - *Not available*
-     - Not yet in rocprofv3
-     - 
+     - `-p  |--collection-period`,`--collection-period-unit`
+     - Users can specify multiple configurations, each defined by a triplet in the format `start_delay:collection_time:repeat`, with the ability to change the unit of time in the given configurations.
+     -
    * - Trace Control options
      - Trace start
      -  `--trace-start <on|off>`
@@ -341,6 +369,13 @@ ROCprofiler-SDK introduces a new command-line tool, `rocprofv3`, which is a more
      - *Not available*
      - *Not available*
      - Not yet in rocprofv3
+     -
+   * - PC Sampling options
+     - PC Sampling`
+     - *Not available*
+     - *Not available*
+     - `--pc-sampling-beta-enabled`
+     - Enable pc sampling support; beta version.
      - 
    * - Legacy options
      - Timestamp On/Off
@@ -377,3 +412,16 @@ ROCprofiler-SDK introduces a new command-line tool, `rocprofv3`, which is a more
      - *Not available*
      - Not applicable for rocprofv3
      - 
+
+
+========================================================
+Timing Difference Between rocprofv3 and rocprofv1/v2 
+========================================================
+
+``rocprofv3`` has improved the accuracy of timing information by reducing the tool overhead required to collect data and reducing the interference to the timing of the kernel being measured. The result of this work is a reduction in variance of kernel times received for the same kernel execution and more accurate timing in general. These changes have not been backported (and will not be backported) to rocprofv1/v2, so there can be substantial (20%) differences in execution time reported by v1/v2 vs v3 for a single kernel execution. Over a large number of samples of the same kernel, the difference in average execution time is in the low single digit percentage time with a much tighter variance of results on rocprofv3. We have included testing in the test suite to verify the timing information outputted by rocprofv3 to ensure that the values we are returning are accurate.
+
+========================================================
+Default run of rocprofv3 and rocprofv1/v2
+========================================================
+
+``rocprofv3`` has a different default behavior than rocprofv1/v2 when being run without any option. The default behavior of rocprofv3 is to collect all available agents on the system and to output it in ``csv`` format. The default behavior of rocprofv1/v2 was to output the `kernel traces` in CSV format. In rocprofv3, kernel traces can be obtained by using ``--kernel-trace`` option.
